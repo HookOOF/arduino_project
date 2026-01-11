@@ -206,6 +206,11 @@ CMD {"command":"FORWARD","duration_ms":3000}
 | GET | `/metrics/latest` | Последние метрики |
 | GET | `/metrics/stats` | Статистика по метрикам |
 | DELETE | `/metrics` | Очистить историю метрик |
+| GET | `/images` | Список сохранённых изображений |
+| GET | `/images/latest` | Скачать последнее изображение |
+| GET | `/images/{filename}` | Скачать изображение по имени |
+| GET | `/images/stats` | Статистика по изображениям |
+| DELETE | `/images` | Удалить все изображения |
 | GET | `/config` | Конфигурация сервера |
 
 ## Режимы работы

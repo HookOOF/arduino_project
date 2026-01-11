@@ -16,15 +16,22 @@ import logging
 from datetime import datetime
 from typing import Optional, List, Dict, Any
 from io import BytesIO
+from pathlib import Path
 
 from fastapi import FastAPI, Request, HTTPException
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, FileResponse
+from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 import uvicorn
 
 # OpenAI
 from openai import OpenAI
+
+# Директория для сохранения изображений
+IMAGES_DIR = Path("images")
+IMAGES_DIR.mkdir(exist_ok=True)
+MAX_SAVED_IMAGES = 500  # Максимум сохранённых изображений
 
 # Настройка логирования
 logging.basicConfig(
@@ -128,6 +135,9 @@ command_history: List[Dict[str, Any]] = []
 metrics_history: List[Dict[str, Any]] = []
 MAX_METRICS_HISTORY = 1000  # Максимум записей
 
+# Список сохранённых изображений
+saved_images: List[Dict[str, Any]] = []
+
 # ==================== ФОРМИРОВАНИЕ ПРОМПТА ====================
 
 SYSTEM_PROMPT = """You are an AI controller for a small autonomous car. 
@@ -199,6 +209,68 @@ def build_user_prompt(data: CarDataRequest) -> str:
     ])
     
     return "\n".join(prompt_parts)
+
+
+def save_image(image_data: ImageData, session_id: int, step: int) -> Optional[Dict[str, Any]]:
+    """Сохранение изображения на диск"""
+    global saved_images
+    
+    if not image_data or not image_data.data_base64:
+        return None
+    
+    try:
+        # Декодируем base64
+        image_bytes = base64.b64decode(image_data.data_base64)
+        
+        # Генерируем имя файла
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        filename = f"session{session_id}_step{step}_{timestamp}.png"
+        filepath = IMAGES_DIR / filename
+        
+        # Конвертируем grayscale в PNG
+        try:
+            from PIL import Image
+            
+            # Создаём изображение из raw bytes (grayscale)
+            img = Image.frombytes('L', (image_data.width, image_data.height), image_bytes)
+            img.save(filepath, format='PNG')
+            
+            logger.info(f"Image saved: {filename}")
+            
+            # Добавляем в список
+            image_info = {
+                "filename": filename,
+                "path": str(filepath),
+                "session_id": session_id,
+                "step": step,
+                "width": image_data.width,
+                "height": image_data.height,
+                "timestamp": datetime.now().isoformat(),
+                "size_bytes": len(image_bytes)
+            }
+            saved_images.append(image_info)
+            
+            # Удаляем старые изображения если превышен лимит
+            while len(saved_images) > MAX_SAVED_IMAGES:
+                old_image = saved_images.pop(0)
+                old_path = Path(old_image["path"])
+                if old_path.exists():
+                    old_path.unlink()
+                    logger.info(f"Deleted old image: {old_image['filename']}")
+            
+            return image_info
+            
+        except ImportError:
+            # Если PIL не установлен, сохраняем raw данные
+            filepath = IMAGES_DIR / f"session{session_id}_step{step}_{timestamp}.raw"
+            with open(filepath, 'wb') as f:
+                f.write(image_bytes)
+            logger.warning("PIL not installed, saved raw image data")
+            return {"filename": filepath.name, "path": str(filepath)}
+            
+    except Exception as e:
+        logger.error(f"Error saving image: {e}")
+        return None
 
 
 def decode_image_for_vision(image_data: ImageData) -> Optional[str]:
@@ -346,7 +418,8 @@ async def root():
         "model": API_MODEL if not DEMO_MODE else "N/A",
         "time": datetime.now().isoformat(),
         "commands_processed": len(command_history),
-        "metrics_stored": len(metrics_history)
+        "metrics_stored": len(metrics_history),
+        "images_saved": len(saved_images)
     }
 
 
@@ -394,6 +467,12 @@ async def get_command(request: Request):
                 "gy": data.sensors.mpu6050.gy,
                 "gz": data.sensors.mpu6050.gz,
             }
+        
+        # Сохраняем изображение если есть
+        if data.image and data.image.available and data.image.data_base64:
+            image_info = save_image(data.image, data.session_id, data.step)
+            if image_info:
+                metrics_entry["image_path"] = image_info["filename"]
         
         metrics_history.append(metrics_entry)
         
@@ -501,6 +580,82 @@ async def clear_metrics():
     """Очистка истории метрик"""
     metrics_history.clear()
     return {"status": "cleared"}
+
+
+# ==================== IMAGES ENDPOINTS ====================
+
+@app.get("/images")
+async def get_images(limit: int = 50):
+    """Список сохранённых изображений"""
+    return {
+        "total": len(saved_images),
+        "images": saved_images[-limit:]
+    }
+
+
+@app.get("/images/latest")
+async def get_latest_image():
+    """Получить последнее изображение"""
+    if not saved_images:
+        raise HTTPException(status_code=404, detail="No images available")
+    
+    latest = saved_images[-1]
+    filepath = Path(latest["path"])
+    
+    if not filepath.exists():
+        raise HTTPException(status_code=404, detail="Image file not found")
+    
+    return FileResponse(
+        filepath,
+        media_type="image/png",
+        filename=latest["filename"]
+    )
+
+
+@app.get("/images/{filename}")
+async def get_image(filename: str):
+    """Получить изображение по имени файла"""
+    filepath = IMAGES_DIR / filename
+    
+    if not filepath.exists():
+        raise HTTPException(status_code=404, detail="Image not found")
+    
+    media_type = "image/png" if filename.endswith(".png") else "application/octet-stream"
+    return FileResponse(filepath, media_type=media_type, filename=filename)
+
+
+@app.delete("/images")
+async def clear_images():
+    """Удалить все сохранённые изображения"""
+    global saved_images
+    
+    deleted_count = 0
+    for image_info in saved_images:
+        filepath = Path(image_info["path"])
+        if filepath.exists():
+            filepath.unlink()
+            deleted_count += 1
+    
+    saved_images.clear()
+    return {"status": "cleared", "deleted": deleted_count}
+
+
+@app.get("/images/stats")
+async def get_images_stats():
+    """Статистика по изображениям"""
+    if not saved_images:
+        return {"total": 0}
+    
+    total_size = sum(img.get("size_bytes", 0) for img in saved_images)
+    
+    return {
+        "total": len(saved_images),
+        "total_size_bytes": total_size,
+        "total_size_mb": round(total_size / (1024 * 1024), 2),
+        "first_image": saved_images[0]["timestamp"],
+        "last_image": saved_images[-1]["timestamp"],
+        "directory": str(IMAGES_DIR.absolute())
+    }
 
 
 @app.get("/config")
