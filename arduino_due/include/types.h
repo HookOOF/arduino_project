@@ -6,9 +6,9 @@
 // Аппаратные константы
 namespace Hardware {
     // HC-SR04 (NewPing библиотека)
-    // Подключение: TRIG=D10, ECHO=D11
-    const uint8_t TRIG_PIN = 10;
-    const uint8_t ECHO_PIN = 11;
+    // Подключение: TRIG=D8, ECHO=D9
+    const uint8_t TRIG_PIN = 8;
+    const uint8_t ECHO_PIN = 9;
     const uint16_t MAX_DISTANCE_CM = 400;  // Максимальное расстояние для NewPing
     
     // ИК-датчик препятствий (HIGH = препятствие, LOW = свободно)
@@ -114,4 +114,5 @@ struct LogEntry {
 };
 
 #endif // TYPES_H
+
 

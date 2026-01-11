@@ -380,3 +380,4 @@ void CameraModule::fifoReadClockLow() {
     pinLow(Hardware::CAM_RCK);
 }
 
+

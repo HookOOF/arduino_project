@@ -48,3 +48,4 @@ size_t base64_encode(const uint8_t* input, size_t inputLen, char* output, size_t
     return outPos;
 }
 
+
