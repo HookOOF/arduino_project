@@ -11,9 +11,6 @@ namespace Hardware {
     const uint8_t ECHO_PIN = 9;
     const uint16_t MAX_DISTANCE_CM = 400;  // Максимальное расстояние для NewPing
     
-    // ИК-датчик препятствий (HIGH = препятствие, LOW = свободно)
-    const uint8_t OBSTACLE_PIN = 24;
-    
     // Фоторезистор
     const uint8_t LIGHT_PIN = A0;
     const int LIGHT_THRESHOLD = 500; // lightRaw < LIGHT_THRESHOLD → темно
@@ -71,7 +68,6 @@ struct DateTime {
 // Снимок данных с датчиков
 struct SensorSnapshot {
     float distanceCm;  // расстояние от HC-SR04 (см)
-    bool obstacle;     // препятствие от ИК-датчика
     int lightRaw;      // сырое значение фоторезистора
     bool isDark;       // темно (lightRaw < LIGHT_THRESHOLD)
     float ax, ay, az;  // ускорение от MPU6050
@@ -109,7 +105,6 @@ struct LogEntry {
     float distanceCm;         // расстояние
     int lightRaw;             // освещенность
     bool isDark;              // темно ли
-    bool obstacle;            // препятствие
     bool imageSent;           // отправлено ли изображение
 };
 

@@ -62,7 +62,6 @@ class MPU6050Data(BaseModel):
 
 class SensorData(BaseModel):
     distance_cm: float = 400.0
-    obstacle: bool = False
     light_raw: int = 500
     light_dark: bool = False
     mpu6050: Optional[MPU6050Data] = None
@@ -129,9 +128,9 @@ You must respond with ONLY a valid JSON object in this format:
 {"command": "COMMAND_NAME", "duration_ms": 3000}
 
 Rules for decision making:
-1. If obstacle is detected (obstacle=true) or distance < 20cm, consider stopping or turning
+1. If distance < 20cm, consider stopping or turning
 2. If distance < 50cm, slow down or prepare to turn
-3. If the path is clear (distance > 100cm, no obstacle), move forward
+3. If the path is clear (distance > 100cm), move forward
 4. If in darkness (light_dark=true), be more cautious
 5. Use MPU6050 data to detect if the car is tilted or unstable
 
@@ -147,7 +146,6 @@ def build_user_prompt(data: CarDataRequest) -> str:
         "",
         "=== SENSOR DATA ===",
         f"Distance to obstacle: {data.sensors.distance_cm:.1f} cm",
-        f"Obstacle detected: {'YES' if data.sensors.obstacle else 'NO'}",
         f"Light level: {data.sensors.light_raw} (Dark: {'YES' if data.sensors.light_dark else 'NO'})",
     ]
     
@@ -298,11 +296,7 @@ def get_demo_command(data: CarDataRequest) -> CommandResponse:
     
     sensors = data.sensors
     
-    # Простая логика принятия решений
-    if sensors.obstacle:
-        # Препятствие обнаружено - останавливаемся
-        return CommandResponse(command="STOP", duration_ms=1000)
-    
+    # Простая логика принятия решений на основе расстояния
     if sensors.distance_cm < 20:
         # Очень близко - отъезжаем назад
         return CommandResponse(command="BACKWARD", duration_ms=1000)
@@ -356,8 +350,7 @@ async def get_command(request: Request):
         data = CarDataRequest(**body)
         
         logger.info(f"Received data: session={data.session_id}, step={data.step}")
-        logger.info(f"Sensors: dist={data.sensors.distance_cm:.1f}cm, "
-                   f"obstacle={data.sensors.obstacle}, dark={data.sensors.light_dark}")
+        logger.info(f"Sensors: dist={data.sensors.distance_cm:.1f}cm, dark={data.sensors.light_dark}")
         
         # Получаем команду от LLM
         response = await get_llm_command(data)

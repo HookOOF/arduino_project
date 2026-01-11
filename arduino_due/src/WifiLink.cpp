@@ -42,7 +42,6 @@ void WifiLink::sendData(uint32_t sessionId, uint32_t stepId,
     
     JsonObject sensorsObj = doc.createNestedObject("sensors");
     sensorsObj["distance_cm"] = sensors.distanceCm;
-    sensorsObj["obstacle"] = sensors.obstacle;
     sensorsObj["light_raw"] = sensors.lightRaw;
     sensorsObj["light_dark"] = sensors.isDark;
     
@@ -77,8 +76,6 @@ void WifiLink::sendData(uint32_t sessionId, uint32_t stepId,
     Serial1.print("\",\"sensors\":{");
     Serial1.print("\"distance_cm\":");
     Serial1.print(sensors.distanceCm, 1);
-    Serial1.print(",\"obstacle\":");
-    Serial1.print(sensors.obstacle ? "true" : "false");
     Serial1.print(",\"light_raw\":");
     Serial1.print(sensors.lightRaw);
     Serial1.print(",\"light_dark\":");

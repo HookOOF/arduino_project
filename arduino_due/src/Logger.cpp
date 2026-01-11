@@ -45,8 +45,6 @@ void Logger::printAllToSerial() const {
         Serial.print(entry.lightRaw);
         Serial.print(" dark=");
         Serial.print(entry.isDark ? 1 : 0);
-        Serial.print(" obst=");
-        Serial.print(entry.obstacle ? 1 : 0);
         Serial.print(" img=");
         Serial.print(entry.imageSent ? 1 : 0);
         Serial.print(" dur=");

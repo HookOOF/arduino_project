@@ -12,10 +12,6 @@ bool Sensors::begin() {
     sonar = &sonarInstance;
     Serial.println("Sensors: HC-SR04 initialized");
     
-    // Инициализация ИК-датчика препятствий
-    pinMode(Hardware::OBSTACLE_PIN, INPUT);
-    Serial.println("Sensors: Obstacle sensor initialized");
-    
     // Фоторезистор не требует инициализации
     Serial.println("Sensors: Photoresistor ready");
     
@@ -44,9 +40,6 @@ SensorSnapshot Sensors::readSnapshot() {
     
     // Чтение HC-SR04
     snapshot.distanceCm = readHCSR04();
-    
-    // Чтение ИК-датчика препятствий
-    snapshot.obstacle = readObstacleSensor();
     
     // Чтение фоторезистора
     snapshot.isDark = readLightSensor(snapshot.lightRaw);
@@ -94,10 +87,6 @@ float Sensors::readHCSR04() {
     
     return (duration * 0.0343f) / 2.0f;
 #endif
-}
-
-bool Sensors::readObstacleSensor() {
-    return (digitalRead(Hardware::OBSTACLE_PIN) == HIGH);
 }
 
 bool Sensors::readLightSensor(int& lightRaw) {

@@ -114,9 +114,7 @@ void CarController::handleStateCollectSensors() {
         Serial.print(stepId);
         Serial.print(": dist=");
         Serial.print(currentSensorSnapshot.distanceCm, 1);
-        Serial.print("cm obst=");
-        Serial.print(currentSensorSnapshot.obstacle ? "Y" : "N");
-        Serial.print(" dark=");
+        Serial.print("cm dark=");
         Serial.print(currentSensorSnapshot.isDark ? "Y" : "N");
         Serial.print(" cam=");
         Serial.println(currentImageSnapshot.available ? "Y" : "N");
@@ -216,7 +214,6 @@ void CarController::logCurrentStep() {
     entry.distanceCm = currentSensorSnapshot.distanceCm;
     entry.lightRaw = currentSensorSnapshot.lightRaw;
     entry.isDark = currentSensorSnapshot.isDark;
-    entry.obstacle = currentSensorSnapshot.obstacle;
     entry.imageSent = currentImageSnapshot.available;
     
     logger.add(entry);

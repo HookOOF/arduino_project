@@ -20,7 +20,7 @@
 ### Arduino DUE
 
 Основной микроконтроллер, который:
-- Собирает данные с датчиков (HC-SR04, MPU6050, фоторезистор, ИК-датчик)
+- Собирает данные с датчиков (HC-SR04, MPU6050, фоторезистор)
 - Захватывает изображения с камеры OV7670 (опционально)
 - Хранит справочник команд в энергонезависимой памяти (DueFlashStorage)
 - Ведёт журнал выполненных команд
@@ -48,10 +48,9 @@ FastAPI сервер с интеграцией OpenAI:
 
 | Компонент | Пины |
 |-----------|------|
-| HC-SR04 (ультразвук) | TRIG=10, ECHO=11 |
+| HC-SR04 (ультразвук) | TRIG=8, ECHO=9 |
 | MPU6050 (I2C Wire1) | SDA1=70, SCL1=71 |
 | Фоторезистор | A0 |
-| ИК-датчик препятствий | D24 |
 | Моторы (левый) | IN1=6, IN2=7 |
 | Моторы (правый) | IN3=4, IN4=5 |
 | NodeMCU Serial1 | TX1=18, RX1=19 |
@@ -141,7 +140,7 @@ docker-compose up --build
 ### Arduino → NodeMCU (Serial1)
 
 ```
-DATA {"session_id":1,"step":42,"timestamp":"11:01:2026 15:30:00","sensors":{"distance_cm":123.5,"obstacle":false,"light_raw":512,"light_dark":false,"mpu6050":{"ax":0.12,"ay":-0.03,"az":9.81,"gx":0.01,"gy":0.00,"gz":-0.02}},"image":{"available":true,"width":80,"height":60,"format":"GRAY8"}}
+DATA {"session_id":1,"step":42,"timestamp":"11:01:2026 15:30:00","sensors":{"distance_cm":123.5,"light_raw":512,"light_dark":false,"mpu6050":{"ax":0.12,"ay":-0.03,"az":9.81,"gx":0.01,"gy":0.00,"gz":-0.02}},"image":{"available":true,"width":80,"height":60,"format":"GRAY8"}}
 ```
 
 ### NodeMCU → Server (HTTP POST)
@@ -204,9 +203,9 @@ CMD {"command":"FORWARD","duration_ms":3000}
 ### Demo Mode
 
 Без API ключа сервер работает в демо-режиме с простой логикой:
-- Препятствие → STOP
 - Расстояние < 20 см → BACKWARD
 - Расстояние < 50 см → LEFT/RIGHT
+- Темно → осторожно FORWARD
 - Путь свободен → FORWARD
 
 ## Лицензия

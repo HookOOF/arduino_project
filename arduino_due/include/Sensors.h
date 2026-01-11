@@ -55,12 +55,6 @@ private:
     float readHCSR04();
     
     /**
-     * Чтение состояния ИК-датчика препятствий
-     * @return true если препятствие
-     */
-    bool readObstacleSensor();
-    
-    /**
      * Чтение фоторезистора
      * @param lightRaw выходной параметр - сырое значение
      * @return true если темно
