@@ -23,13 +23,13 @@
 // ==================== НАСТРОЙКИ ====================
 
 // WiFi настройки
-const char* WIFI_SSID = "ard";
-const char* WIFI_PASSWORD = "54321987";
+const char* WIFI_SSID = "TP-Link_461B";
+const char* WIFI_PASSWORD = "9152910008";
 
 // Сервер настройки
-const char* SERVER_HOST = "192.168.1.100";  // Изменить на IP вашего сервера
+const char* SERVER_HOST = "192.168.0.93";  // Изменить на IP вашего сервера
 const int SERVER_PORT = 8000;
-String SERVER_URL = "http://192.168.1.100:8000/command";  // Изменить на IP вашего сервера
+String SERVER_URL = "http://192.168.0.93:8000/command";  // Изменить на IP вашего сервера
 
 // Serial настройки (для связи с Arduino Due)
 const int SERIAL_BAUD = 9600;

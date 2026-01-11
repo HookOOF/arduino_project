@@ -35,11 +35,19 @@ logger = logging.getLogger(__name__)
 
 # ==================== КОНФИГУРАЦИЯ ====================
 
-# OpenAI API ключ (из переменной окружения или .env файла)
-OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "")
+# API ключ (OpenAI или OpenRouter)
+API_KEY = os.getenv("OPENAI_API_KEY", "") or os.getenv("OPENROUTER_API_KEY", "")
+
+# Base URL для API (OpenRouter или OpenAI)
+# OpenRouter: https://openrouter.ai/api/v1
+# OpenAI: https://api.openai.com/v1 (по умолчанию)
+API_BASE_URL = os.getenv("OPENAI_BASE_URL", "https://openrouter.ai/api/v1")
 
 # Модель для использования
-OPENAI_MODEL = os.getenv("OPENAI_MODEL", "gpt-4o-mini")
+# OpenRouter модели: google/gemini-2.0-flash-exp:free, meta-llama/llama-3.1-8b-instruct:free, 
+#                    openai/gpt-4o-mini, anthropic/claude-3.5-sonnet, и др.
+# OpenAI модели: gpt-4o-mini, gpt-4o, gpt-3.5-turbo
+API_MODEL = os.getenv("OPENAI_MODEL", "google/gemini-2.0-flash-exp:free")
 
 # Доступные команды
 AVAILABLE_COMMANDS = ["FORWARD", "BACKWARD", "LEFT", "RIGHT", "STOP"]
@@ -47,8 +55,8 @@ AVAILABLE_COMMANDS = ["FORWARD", "BACKWARD", "LEFT", "RIGHT", "STOP"]
 # Базовая длительность команды (мс)
 DEFAULT_DURATION_MS = 3000
 
-# Режим работы без OpenAI (для тестирования)
-DEMO_MODE = not OPENAI_API_KEY
+# Режим работы без API (для тестирования)
+DEMO_MODE = not API_KEY
 
 # ==================== PYDANTIC МОДЕЛИ ====================
 
@@ -101,16 +109,24 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# OpenAI клиент
+# OpenAI-совместимый клиент (работает с OpenAI и OpenRouter)
 openai_client = None
-if OPENAI_API_KEY:
-    openai_client = OpenAI(api_key=OPENAI_API_KEY)
-    logger.info(f"OpenAI client initialized with model: {OPENAI_MODEL}")
+if API_KEY:
+    openai_client = OpenAI(
+        api_key=API_KEY,
+        base_url=API_BASE_URL
+    )
+    logger.info(f"API client initialized: {API_BASE_URL}")
+    logger.info(f"Model: {API_MODEL}")
 else:
-    logger.warning("OPENAI_API_KEY not set, running in DEMO mode")
+    logger.warning("API key not set, running in DEMO mode")
 
 # История команд для сессии
 command_history: List[Dict[str, Any]] = []
+
+# История метрик датчиков
+metrics_history: List[Dict[str, Any]] = []
+MAX_METRICS_HISTORY = 1000  # Максимум записей
 
 # ==================== ФОРМИРОВАНИЕ ПРОМПТА ====================
 
@@ -237,7 +253,7 @@ async def get_llm_command(data: CarDataRequest) -> CommandResponse:
         # Если есть изображение, используем Vision API
         image_url = decode_image_for_vision(data.image) if data.image else None
         
-        if image_url and "gpt-4" in OPENAI_MODEL:
+        if image_url and ("gpt-4" in API_MODEL or "claude" in API_MODEL or "gemini" in API_MODEL):
             # Vision запрос
             messages = [
                 {"role": "system", "content": SYSTEM_PROMPT},
@@ -250,9 +266,9 @@ async def get_llm_command(data: CarDataRequest) -> CommandResponse:
                 }
             ]
         
-        # Запрос к OpenAI
+        # Запрос к API (OpenAI или OpenRouter)
         response = openai_client.chat.completions.create(
-            model=OPENAI_MODEL,
+            model=API_MODEL,
             messages=messages,
             max_tokens=100,
             temperature=0.3,
@@ -325,10 +341,12 @@ async def root():
     return {
         "service": "LLM Car Controller",
         "status": "running",
-        "mode": "DEMO" if DEMO_MODE else "OpenAI",
-        "model": OPENAI_MODEL if not DEMO_MODE else "N/A",
+        "mode": "DEMO" if DEMO_MODE else "LLM",
+        "api_base": API_BASE_URL if not DEMO_MODE else "N/A",
+        "model": API_MODEL if not DEMO_MODE else "N/A",
         "time": datetime.now().isoformat(),
-        "commands_processed": len(command_history)
+        "commands_processed": len(command_history),
+        "metrics_stored": len(metrics_history)
     }
 
 
@@ -351,6 +369,37 @@ async def get_command(request: Request):
         
         logger.info(f"Received data: session={data.session_id}, step={data.step}")
         logger.info(f"Sensors: dist={data.sensors.distance_cm:.1f}cm, dark={data.sensors.light_dark}")
+        
+        # Сохраняем метрики датчиков
+        metrics_entry = {
+            "session_id": data.session_id,
+            "step": data.step,
+            "timestamp": data.timestamp,
+            "received_at": datetime.now().isoformat(),
+            "sensors": {
+                "distance_cm": data.sensors.distance_cm,
+                "light_raw": data.sensors.light_raw,
+                "light_dark": data.sensors.light_dark,
+            },
+            "image_available": data.image.available if data.image else False
+        }
+        
+        # Добавляем данные MPU6050 если есть
+        if data.sensors.mpu6050:
+            metrics_entry["sensors"]["mpu6050"] = {
+                "ax": data.sensors.mpu6050.ax,
+                "ay": data.sensors.mpu6050.ay,
+                "az": data.sensors.mpu6050.az,
+                "gx": data.sensors.mpu6050.gx,
+                "gy": data.sensors.mpu6050.gy,
+                "gz": data.sensors.mpu6050.gz,
+            }
+        
+        metrics_history.append(metrics_entry)
+        
+        # Ограничиваем размер истории
+        if len(metrics_history) > MAX_METRICS_HISTORY:
+            metrics_history.pop(0)
         
         # Получаем команду от LLM
         response = await get_llm_command(data)
@@ -400,12 +449,67 @@ async def clear_history():
     return {"status": "cleared"}
 
 
+@app.get("/metrics")
+async def get_metrics(limit: int = 100):
+    """Получение истории метрик датчиков"""
+    return {
+        "total": len(metrics_history),
+        "metrics": metrics_history[-limit:]
+    }
+
+
+@app.get("/metrics/latest")
+async def get_latest_metrics():
+    """Получение последних метрик"""
+    if not metrics_history:
+        return {"error": "No metrics available"}
+    return metrics_history[-1]
+
+
+@app.get("/metrics/stats")
+async def get_metrics_stats():
+    """Статистика по метрикам"""
+    if not metrics_history:
+        return {"error": "No metrics available"}
+    
+    distances = [m["sensors"]["distance_cm"] for m in metrics_history]
+    light_values = [m["sensors"]["light_raw"] for m in metrics_history]
+    dark_count = sum(1 for m in metrics_history if m["sensors"]["light_dark"])
+    image_count = sum(1 for m in metrics_history if m.get("image_available", False))
+    
+    return {
+        "total_records": len(metrics_history),
+        "distance": {
+            "min": min(distances),
+            "max": max(distances),
+            "avg": sum(distances) / len(distances)
+        },
+        "light": {
+            "min": min(light_values),
+            "max": max(light_values),
+            "avg": sum(light_values) / len(light_values),
+            "dark_percentage": (dark_count / len(metrics_history)) * 100
+        },
+        "images_captured": image_count,
+        "first_record": metrics_history[0]["received_at"],
+        "last_record": metrics_history[-1]["received_at"]
+    }
+
+
+@app.delete("/metrics")
+async def clear_metrics():
+    """Очистка истории метрик"""
+    metrics_history.clear()
+    return {"status": "cleared"}
+
+
 @app.get("/config")
 async def get_config():
     """Получение конфигурации сервера"""
     return {
-        "mode": "DEMO" if DEMO_MODE else "OpenAI",
-        "model": OPENAI_MODEL,
+        "mode": "DEMO" if DEMO_MODE else "LLM",
+        "api_base": API_BASE_URL,
+        "model": API_MODEL,
         "available_commands": AVAILABLE_COMMANDS,
         "default_duration_ms": DEFAULT_DURATION_MS
     }
@@ -417,14 +521,16 @@ if __name__ == "__main__":
     print("\n" + "=" * 50)
     print("  LLM Car Controller Server")
     print("=" * 50)
-    print(f"  Mode: {'DEMO' if DEMO_MODE else 'OpenAI'}")
+    print(f"  Mode: {'DEMO' if DEMO_MODE else 'LLM'}")
     if not DEMO_MODE:
-        print(f"  Model: {OPENAI_MODEL}")
+        print(f"  API: {API_BASE_URL}")
+        print(f"  Model: {API_MODEL}")
     print(f"  Server: http://0.0.0.0:8000")
     print("=" * 50 + "\n")
     
     if DEMO_MODE:
-        print("⚠️  DEMO MODE: Set OPENAI_API_KEY environment variable for LLM mode")
+        print("  DEMO MODE: Set OPENROUTER_API_KEY or OPENAI_API_KEY")
+        print("  Example: set OPENROUTER_API_KEY=sk-or-v1-xxx")
         print()
     
     uvicorn.run(

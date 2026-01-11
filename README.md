@@ -120,10 +120,18 @@ source venv/bin/activate  # Linux/Mac
 # Установите зависимости
 pip install -r requirements.txt
 
-# Установите переменную окружения
-set OPENAI_API_KEY=sk-your-api-key  # Windows
+# Для OpenRouter (бесплатные модели доступны):
+set OPENROUTER_API_KEY=sk-or-v1-xxx  # Windows
 # или
-export OPENAI_API_KEY=sk-your-api-key  # Linux/Mac
+export OPENROUTER_API_KEY=sk-or-v1-xxx  # Linux/Mac
+
+# Опционально: выбор модели
+set OPENAI_MODEL=google/gemini-2.0-flash-exp:free
+
+# Для OpenAI (альтернатива):
+# set OPENAI_API_KEY=sk-xxx
+# set OPENAI_BASE_URL=https://api.openai.com/v1
+# set OPENAI_MODEL=gpt-4o-mini
 
 # Запустите сервер
 python main.py
@@ -132,6 +140,8 @@ python main.py
 Или с Docker:
 ```bash
 cd server
+# Установите переменные в .env или передайте напрямую:
+set OPENROUTER_API_KEY=sk-or-v1-xxx
 docker-compose up --build
 ```
 
@@ -191,14 +201,26 @@ CMD {"command":"FORWARD","duration_ms":3000}
 | POST | `/command` | Получить команду (основной) |
 | POST | `/data` | Альтернативный endpoint |
 | GET | `/history` | История команд |
-| DELETE | `/history` | Очистить историю |
+| DELETE | `/history` | Очистить историю команд |
+| GET | `/metrics` | История метрик датчиков |
+| GET | `/metrics/latest` | Последние метрики |
+| GET | `/metrics/stats` | Статистика по метрикам |
+| DELETE | `/metrics` | Очистить историю метрик |
 | GET | `/config` | Конфигурация сервера |
 
 ## Режимы работы
 
-### OpenAI Mode
+### LLM Mode (OpenRouter / OpenAI)
 
-При наличии `OPENAI_API_KEY` сервер использует языковую модель для принятия решений.
+При наличии API ключа сервер использует языковую модель для принятия решений.
+
+**OpenRouter** (рекомендуется, есть бесплатные модели):
+- `OPENROUTER_API_KEY` - ваш ключ от openrouter.ai
+- Бесплатные модели: `google/gemini-2.0-flash-exp:free`, `meta-llama/llama-3.1-8b-instruct:free`
+
+**OpenAI**:
+- `OPENAI_API_KEY` - ваш ключ от OpenAI
+- `OPENAI_BASE_URL=https://api.openai.com/v1`
 
 ### Demo Mode
 

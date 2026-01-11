@@ -8,8 +8,13 @@ services:
     ports:
       - "8000:8000"
     environment:
-      - OPENAI_API_KEY=${OPENAI_API_KEY}
-      - OPENAI_MODEL=${OPENAI_MODEL:-gpt-4o-mini}
+      # Для OpenRouter:
+      - OPENROUTER_API_KEY=${OPENROUTER_API_KEY}
+      - OPENAI_BASE_URL=${OPENAI_BASE_URL:-https://openrouter.ai/api/v1}
+      - OPENAI_MODEL=${OPENAI_MODEL:-google/gemini-2.0-flash-exp:free}
+      # Или для OpenAI:
+      # - OPENAI_API_KEY=${OPENAI_API_KEY}
+      # - OPENAI_MODEL=${OPENAI_MODEL:-gpt-4o-mini}
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
