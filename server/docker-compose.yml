@@ -7,14 +7,12 @@ services:
     build: .
     ports:
       - "8000:8000"
-    environment:
-      # Для OpenRouter:
-      - OPENROUTER_API_KEY=${OPENROUTER_API_KEY}
-      - OPENAI_BASE_URL=${OPENAI_BASE_URL:-https://openrouter.ai/api/v1}
-      - OPENAI_MODEL=${OPENAI_MODEL:-google/gemini-2.0-flash-exp:free}
-      # Или для OpenAI:
-      # - OPENAI_API_KEY=${OPENAI_API_KEY}
-      # - OPENAI_MODEL=${OPENAI_MODEL:-gpt-4o-mini}
+    # environment берётся из Dockerfile (ENV)
+    # Раскомментируйте ниже для переопределения из системы:
+    # environment:
+    #   - OPENROUTER_API_KEY=${OPENROUTER_API_KEY}
+    #   - OPENAI_BASE_URL=${OPENAI_BASE_URL:-https://openrouter.ai/api/v1}
+    #   - OPENAI_MODEL=${OPENAI_MODEL:-google/gemini-2.0-flash-exp:free}
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
