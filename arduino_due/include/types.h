@@ -13,7 +13,7 @@ namespace Hardware {
     
     // Фоторезистор
     const uint8_t LIGHT_PIN = A0;
-    const int LIGHT_THRESHOLD = 500; // lightRaw < LIGHT_THRESHOLD → темно
+    const int LIGHT_THRESHOLD = 200; // lightRaw < LIGHT_THRESHOLD → темно
     
     // MPU6050 (I2C Wire1 - SDA1, SCL1)
     // Arduino DUE: SDA1 = 70, SCL1 = 71
@@ -30,7 +30,7 @@ namespace Hardware {
     
     // NodeMCU ESP8266 (Serial1 - TX1, RX1)
     // Arduino DUE: TX1 = 18, RX1 = 19
-    const uint32_t SERIAL1_BAUD = 9600;
+    const uint32_t SERIAL1_BAUD = 115200;
     
     // OV7670 + AL422B FIFO Camera pins
     const uint8_t CAM_VSYNC = 40;

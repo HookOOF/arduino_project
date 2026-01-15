@@ -322,11 +322,28 @@ async def get_llm_command(data: CarDataRequest) -> CommandResponse:
             {"role": "user", "content": user_prompt}
         ]
         
-        # Если есть изображение, используем Vision API
-        image_url = decode_image_for_vision(data.image) if data.image else None
+        # Проверяем доступность изображения: imageAvailable == true И есть data_base64
+        image_available = (
+            data.image is not None and 
+            data.image.available and 
+            data.image.data_base64 is not None and 
+            len(data.image.data_base64) > 0
+        )
         
-        if image_url and ("gpt-4" in API_MODEL or "claude" in API_MODEL or "gemini" in API_MODEL):
-            # Vision запрос
+        # Если изображение доступно, используем Vision API
+        image_url = None
+        if image_available:
+            image_url = decode_image_for_vision(data.image)
+            if image_url:
+                logger.info(f"Image available for Vision API: {data.image.width}x{data.image.height}")
+        
+        # Модели с поддержкой Vision
+        vision_models = ["gpt-4", "claude", "gemini", "llava", "vision"]
+        supports_vision = any(model in API_MODEL.lower() for model in vision_models)
+        
+        if image_url and supports_vision:
+            # Vision запрос с изображением
+            logger.info("Sending request to LLM Vision API with image")
             messages = [
                 {"role": "system", "content": SYSTEM_PROMPT},
                 {
@@ -337,6 +354,11 @@ async def get_llm_command(data: CarDataRequest) -> CommandResponse:
                     ]
                 }
             ]
+        else:
+            # Текстовый запрос без изображения
+            if image_available and not supports_vision:
+                logger.warning(f"Model {API_MODEL} may not support vision, sending text-only request")
+            logger.info("Sending text-only request to LLM API")
         
         # Запрос к API (OpenAI или OpenRouter)
         response = openai_client.chat.completions.create(
@@ -440,8 +462,18 @@ async def get_command(request: Request):
         body = await request.json()
         data = CarDataRequest(**body)
         
+        # Проверяем наличие изображения
+        has_image = (
+            data.image is not None and 
+            data.image.available and 
+            data.image.data_base64 is not None and 
+            len(data.image.data_base64) > 0
+        )
+        
         logger.info(f"Received data: session={data.session_id}, step={data.step}")
         logger.info(f"Sensors: dist={data.sensors.distance_cm:.1f}cm, dark={data.sensors.light_dark}")
+        if has_image:
+            logger.info(f"Image available: {data.image.width}x{data.image.height}, {len(data.image.data_base64)} bytes base64")
         
         # Сохраняем метрики датчиков
         metrics_entry = {

@@ -23,10 +23,38 @@ void WifiLink::begin() {
     Serial.println(Hardware::SERIAL1_BAUD);
 }
 
+uint16_t WifiLink::crc16_ccitt(const uint8_t* data, size_t len) {
+    uint16_t crc = 0xFFFF;
+    for (size_t i = 0; i < len; i++) {
+        crc ^= (uint16_t)data[i] << 8;
+        for (uint8_t j = 0; j < 8; j++) {
+            crc = (crc & 0x8000) ? (crc << 1) ^ 0x1021 : crc << 1;
+        }
+    }
+    return crc;
+}
+
 void WifiLink::sendData(uint32_t sessionId, uint32_t stepId,
                         const DateTime& ts,
                         const SensorSnapshot& sensors,
                         const ImageSnapshot& image) {
+    
+    // ВАЖНО: Сначала отправляем изображение, потом DATA!
+    // Иначе NodeMCU получит DATA, сделает HTTP запрос, и только потом увидит IMG_START
+    // К тому времени Arduino Due уже получит таймаут ожидания IMG_READY
+    
+    bool imageTransferSuccess = false;
+    
+    // Если изображение доступно, отправляем СНАЧАЛА с чанкированием
+    if (image.available && image.buffer != nullptr && image.bufferSize > 0) {
+        imageTransferSuccess = sendImageChunked(image.buffer, image.bufferSize, image.width, image.height);
+        if (!imageTransferSuccess) {
+            Serial.println("WifiLink: Image transfer failed");
+        } else {
+            // Небольшая пауза чтобы NodeMCU обработал IMG_END
+            delay(50);
+        }
+    }
     
     // Формирование временной метки
     char timestampStr[32];
@@ -54,12 +82,13 @@ void WifiLink::sendData(uint32_t sessionId, uint32_t stepId,
     mpuObj["gz"] = sensors.gz;
     
     JsonObject imageObj = doc.createNestedObject("image");
-    imageObj["available"] = image.available;
-    imageObj["width"] = image.width;
-    imageObj["height"] = image.height;
+    // Помечаем доступным только если передача успешна
+    imageObj["available"] = imageTransferSuccess;
+    imageObj["width"] = imageTransferSuccess ? image.width : 0;
+    imageObj["height"] = imageTransferSuccess ? image.height : 0;
     imageObj["format"] = "GRAY8";
     
-    // Отправляем JSON (без изображения в base64 - слишком большое)
+    // Отправляем JSON
     Serial1.print("DATA ");
     serializeJson(doc, Serial1);
     Serial1.println();
@@ -95,25 +124,15 @@ void WifiLink::sendData(uint32_t sessionId, uint32_t stepId,
     Serial1.print(sensors.gz, 2);
     Serial1.print("}},\"image\":{");
     Serial1.print("\"available\":");
-    Serial1.print(image.available ? "true" : "false");
+    // Помечаем доступным только если передача успешна
+    Serial1.print(imageTransferSuccess ? "true" : "false");
     Serial1.print(",\"width\":");
-    Serial1.print(image.width);
+    Serial1.print(imageTransferSuccess ? image.width : 0);
     Serial1.print(",\"height\":");
-    Serial1.print(image.height);
+    Serial1.print(imageTransferSuccess ? image.height : 0);
     Serial1.print(",\"format\":\"GRAY8\"");
     Serial1.println("}}");
 #endif
-
-    // Если изображение доступно, отправляем отдельным пакетом
-    if (image.available && image.buffer != nullptr && image.bufferSize > 0) {
-        Serial1.print("IMAGE ");
-        Serial1.print(image.width);
-        Serial1.print(" ");
-        Serial1.print(image.height);
-        Serial1.print(" ");
-        sendImageBase64(image.buffer, image.bufferSize);
-        Serial1.println();
-    }
 }
 
 bool WifiLink::waitForCommand(Command& outCmd, uint32_t timeoutMs) {
@@ -232,18 +251,143 @@ bool WifiLink::readLine(char* buffer, size_t bufferSize, uint32_t timeoutMs) {
     return false;
 }
 
-void WifiLink::sendImageBase64(const uint8_t* data, size_t size) {
-    // Отправляем изображение чанками по 48 байт (= 64 символа base64)
-    const size_t CHUNK_SIZE = 48;
-    char base64Chunk[65]; // 64 + null terminator
+bool WifiLink::sendImageChunked(const uint8_t* data, size_t size, uint16_t width, uint16_t height) {
+    // Очищаем входной буфер Serial1 перед началом
+    while (Serial1.available()) {
+        Serial1.read();
+    }
     
-    for (size_t i = 0; i < size; i += CHUNK_SIZE) {
-        size_t chunkLen = (i + CHUNK_SIZE <= size) ? CHUNK_SIZE : (size - i);
-        size_t encoded = base64_encode(data + i, chunkLen, base64Chunk, sizeof(base64Chunk));
-        if (encoded > 0) {
-            Serial1.print(base64Chunk);
+    // Вычисляем CRC16 для всего изображения
+    uint16_t crc = crc16_ccitt(data, size);
+    
+    // Вычисляем количество чанков
+    uint16_t totalChunks = (size + CHUNK_RAW_SIZE - 1) / CHUNK_RAW_SIZE;
+    
+    Serial.print("WifiLink: Sending image ");
+    Serial.print(width);
+    Serial.print("x");
+    Serial.print(height);
+    Serial.print(" in ");
+    Serial.print(totalChunks);
+    Serial.println(" chunks");
+    
+    // Отправляем IMG_START
+    Serial1.print("IMG_START ");
+    Serial1.print(width);
+    Serial1.print(" ");
+    Serial1.print(height);
+    Serial1.print(" ");
+    Serial1.print(totalChunks);
+    Serial1.print(" 0x");
+    Serial1.println(crc, HEX);
+    Serial1.flush();  // Ждем отправки
+    
+    // Ждем IMG_READY от NodeMCU
+    char readyBuf[32];
+    if (!readLine(readyBuf, sizeof(readyBuf), ACK_TIMEOUT_MS)) {
+        Serial.println("WifiLink: No IMG_READY received");
+        return false;
+    }
+    if (strncmp(readyBuf, "IMG_READY", 9) != 0) {
+        Serial.print("WifiLink: Expected IMG_READY, got: ");
+        Serial.println(readyBuf);
+        return false;
+    }
+    
+    // Буфер для base64 чанка
+    char base64Chunk[CHUNK_BASE64_SIZE + 1];
+    
+    // Отправляем все чанки
+    for (uint16_t chunkIdx = 0; chunkIdx < totalChunks; chunkIdx++) {
+        size_t offset = chunkIdx * CHUNK_RAW_SIZE;
+        size_t chunkLen = (offset + CHUNK_RAW_SIZE <= size) ? CHUNK_RAW_SIZE : (size - offset);
+        
+        // Кодируем чанк в base64
+        size_t encoded = base64_encode(data + offset, chunkLen, base64Chunk, sizeof(base64Chunk));
+        if (encoded == 0) {
+            Serial.println("WifiLink: Base64 encoding failed");
+            return false;
+        }
+        
+        // Отправляем чанк с повторами при ошибках
+        if (!sendChunkWithAck(chunkIdx, base64Chunk)) {
+            Serial.print("WifiLink: Failed to send chunk ");
+            Serial.println(chunkIdx);
+            // Отправляем IMG_ABORT для сброса на стороне NodeMCU
+            Serial1.println("IMG_ABORT");
+            return false;
         }
     }
+    
+    // Отправляем IMG_END
+    Serial1.println("IMG_END");
+    Serial1.flush();
+    
+    Serial.println("WifiLink: Image transfer complete");
+    return true;
+}
+
+bool WifiLink::sendChunkWithAck(uint16_t chunkIdx, const char* base64Data) {
+    for (uint8_t retry = 0; retry < MAX_RETRIES; retry++) {
+        // Очищаем буфер перед отправкой
+        while (Serial1.available()) {
+            Serial1.read();
+        }
+        
+        // Отправляем чанк
+        Serial1.print("IMG_CHUNK ");
+        Serial1.print(chunkIdx);
+        Serial1.print(" ");
+        Serial1.println(base64Data);
+        Serial1.flush();  // Ждем завершения отправки
+        
+        // Ждем ACK
+        if (waitForAck(chunkIdx)) {
+            return true;
+        }
+        
+        Serial.print("WifiLink: Retry chunk ");
+        Serial.print(chunkIdx);
+        Serial.print(" attempt ");
+        Serial.println(retry + 2);
+        
+        delay(50);  // Пауза перед повтором
+    }
+    
+    return false;
+}
+
+bool WifiLink::waitForAck(uint16_t expectedChunkIdx) {
+    char buffer[32];
+    uint32_t startTime = millis();
+    size_t pos = 0;
+    
+    while ((millis() - startTime) < ACK_TIMEOUT_MS) {
+        if (Serial1.available() > 0) {
+            char c = Serial1.read();
+            
+            if (c == '\n') {
+                buffer[pos] = '\0';
+                
+                // Парсим ответ: ACK idx или NAK idx
+                if (strncmp(buffer, "ACK ", 4) == 0) {
+                    uint16_t ackIdx = atoi(buffer + 4);
+                    if (ackIdx == expectedChunkIdx) {
+                        return true;
+                    }
+                } else if (strncmp(buffer, "NAK ", 4) == 0) {
+                    // NAK получен - повторная передача
+                    return false;
+                }
+                
+                pos = 0;
+            } else if (c != '\r' && pos < sizeof(buffer) - 1) {
+                buffer[pos++] = c;
+            }
+        }
+    }
+    
+    return false; // Таймаут
 }
 
 

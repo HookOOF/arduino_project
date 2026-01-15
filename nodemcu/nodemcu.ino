@@ -32,7 +32,7 @@ const int SERVER_PORT = 8000;
 String SERVER_URL = "http://192.168.0.93:8000/command";  // Изменить на IP вашего сервера
 
 // Serial настройки (для связи с Arduino Due)
-const int SERIAL_BAUD = 9600;
+const int SERIAL_BAUD = 115200;
 
 // Таймауты
 const unsigned long HTTP_TIMEOUT = 10000;      // 10 секунд на HTTP запрос
@@ -46,18 +46,57 @@ String serialBuffer = "";
 unsigned long lastWiFiCheck = 0;
 bool serverAvailable = false;
 
-// Буфер для изображения
+// Структура для чанкированной передачи изображения
+struct ImageTransfer {
+    uint16_t width;
+    uint16_t height;
+    uint16_t totalChunks;
+    uint16_t expectedCrc;
+    uint16_t receivedChunks;
+    String buffer;              // ~7KB для 80x60 base64
+    bool transferInProgress;
+    
+    void reset() {
+        width = 0;
+        height = 0;
+        totalChunks = 0;
+        expectedCrc = 0;
+        receivedChunks = 0;
+        buffer = "";
+        transferInProgress = false;
+    }
+};
+
+ImageTransfer imageTransfer;
+
+// Буфер для изображения (для совместимости)
 String imageBuffer = "";
-bool receivingImage = false;
 int imageWidth = 0;
 int imageHeight = 0;
+
+// ==================== CRC16 ФУНКЦИЯ ====================
+
+uint16_t crc16_ccitt(const uint8_t* data, size_t len) {
+    uint16_t crc = 0xFFFF;
+    for (size_t i = 0; i < len; i++) {
+        crc ^= (uint16_t)data[i] << 8;
+        for (uint8_t j = 0; j < 8; j++) {
+            crc = (crc & 0x8000) ? (crc << 1) ^ 0x1021 : crc << 1;
+        }
+    }
+    return crc;
+}
 
 // ==================== SETUP ====================
 
 void setup() {
     // Инициализация Serial
     Serial.begin(SERIAL_BAUD);
+    Serial.setRxBufferSize(512);  // Увеличенный буфер для чанков
     delay(100);
+    
+    // Инициализация структуры передачи
+    imageTransfer.reset();
     
     Serial.println();
     Serial.println("================================");
@@ -84,8 +123,8 @@ void loop() {
     // Чтение данных от Arduino Due
     processSerialData();
     
-    // Небольшая задержка для стабильности
-    delay(10);
+    // yield вместо delay для более быстрой обработки Serial
+    yield();
 }
 
 // ==================== WiFi ФУНКЦИИ ====================
@@ -126,8 +165,15 @@ void checkWiFiConnection() {
         lastWiFiCheck = millis();
         
         if (WiFi.status() != WL_CONNECTED) {
-            Serial.println("WiFi disconnected! Reconnecting...");
-            connectWiFi();
+            // Переподключаемся без вывода в Serial (мешает протоколу)
+            WiFi.mode(WIFI_STA);
+            WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
+            // Ждем максимум 10 секунд
+            int attempts = 0;
+            while (WiFi.status() != WL_CONNECTED && attempts < 20) {
+                delay(500);
+                attempts++;
+            }
         }
     }
 }
@@ -171,9 +217,26 @@ void processSerialData() {
         String jsonData = line.substring(5);
         handleSensorData(jsonData);
     }
+    else if (line.startsWith("IMG_START ")) {
+        // Начало чанкированной передачи изображения
+        // Формат: IMG_START width height totalChunks 0xCRC
+        handleImageStart(line);
+    }
+    else if (line.startsWith("IMG_CHUNK ")) {
+        // Чанк изображения
+        // Формат: IMG_CHUNK idx base64data
+        handleImageChunk(line);
+    }
+    else if (line.startsWith("IMG_END")) {
+        // Конец передачи изображения
+        handleImageEnd();
+    }
+    else if (line.startsWith("IMG_ABORT")) {
+        // Отмена передачи (без отладочного вывода)
+        imageTransfer.reset();
+    }
     else if (line.startsWith("IMAGE ")) {
-        // Начало изображения
-        // Формат: IMAGE width height base64data
+        // Устаревший формат - одним пакетом (для обратной совместимости)
         int firstSpace = line.indexOf(' ', 6);
         int secondSpace = line.indexOf(' ', firstSpace + 1);
         
@@ -181,21 +244,90 @@ void processSerialData() {
             imageWidth = line.substring(6, firstSpace).toInt();
             imageHeight = line.substring(firstSpace + 1, secondSpace).toInt();
             imageBuffer = line.substring(secondSpace + 1);
-            
-            Serial.print("Received image: ");
-            Serial.print(imageWidth);
-            Serial.print("x");
-            Serial.print(imageHeight);
-            Serial.print(", ");
-            Serial.print(imageBuffer.length());
-            Serial.println(" bytes base64");
         }
     }
-    else {
-        // Неизвестное сообщение
-        Serial.print("Unknown message: ");
-        Serial.println(line.substring(0, 50));
+    // Неизвестные сообщения игнорируем молча - любой вывод мешает протоколу
+}
+
+void handleImageStart(String line) {
+    // Парсим: IMG_START width height totalChunks 0xCRC
+    int idx1 = line.indexOf(' ', 10);
+    int idx2 = line.indexOf(' ', idx1 + 1);
+    int idx3 = line.indexOf(' ', idx2 + 1);
+    
+    if (idx1 < 0 || idx2 < 0 || idx3 < 0) {
+        // Не отправляем debug - мешает протоколу
+        return;
     }
+    
+    imageTransfer.reset();
+    imageTransfer.width = line.substring(10, idx1).toInt();
+    imageTransfer.height = line.substring(idx1 + 1, idx2).toInt();
+    imageTransfer.totalChunks = line.substring(idx2 + 1, idx3).toInt();
+    
+    // Парсим CRC (формат 0xABCD)
+    String crcStr = line.substring(idx3 + 1);
+    crcStr.trim();
+    if (crcStr.startsWith("0x") || crcStr.startsWith("0X")) {
+        imageTransfer.expectedCrc = strtol(crcStr.c_str() + 2, NULL, 16);
+    } else {
+        imageTransfer.expectedCrc = strtol(crcStr.c_str(), NULL, 16);
+    }
+    
+    imageTransfer.transferInProgress = true;
+    imageTransfer.buffer.reserve(imageTransfer.totalChunks * 260);  // Резервируем память
+    
+    // Отправляем подтверждение готовности
+    Serial.println("IMG_READY");
+}
+
+void handleImageChunk(String line) {
+    if (!imageTransfer.transferInProgress) {
+        Serial.println("NAK -1");
+        return;
+    }
+    
+    // Парсим: IMG_CHUNK idx base64data
+    int spaceIdx = line.indexOf(' ', 10);
+    if (spaceIdx < 0) {
+        Serial.println("NAK -2");
+        return;
+    }
+    
+    uint16_t chunkIdx = line.substring(10, spaceIdx).toInt();
+    String chunkData = line.substring(spaceIdx + 1);
+    
+    // Проверяем порядок чанков
+    if (chunkIdx != imageTransfer.receivedChunks) {
+        Serial.print("NAK ");
+        Serial.println(chunkIdx);
+        return;
+    }
+    
+    // Добавляем данные в буфер
+    imageTransfer.buffer += chunkData;
+    imageTransfer.receivedChunks++;
+    
+    // Отправляем ACK немедленно
+    Serial.print("ACK ");
+    Serial.println(chunkIdx);
+    Serial.flush();  // Гарантируем отправку
+}
+
+void handleImageEnd() {
+    if (!imageTransfer.transferInProgress) {
+        return;
+    }
+    
+    // Проверяем что получили все чанки
+    if (imageTransfer.receivedChunks == imageTransfer.totalChunks) {
+        // Копируем в основной буфер для отправки
+        imageWidth = imageTransfer.width;
+        imageHeight = imageTransfer.height;
+        imageBuffer = imageTransfer.buffer;
+    }
+    
+    imageTransfer.reset();
 }
 
 String readSerialLine() {
@@ -216,7 +348,7 @@ String readSerialLine() {
                 startTime = millis(); // Сброс таймаута при получении символа
             }
         }
-        delay(1);
+        yield();  // Даем время WiFi стеку, но без delay
     }
     
     result.trim();
@@ -228,7 +360,6 @@ String readSerialLine() {
 void handleSensorData(String jsonData) {
     // Проверяем WiFi
     if (WiFi.status() != WL_CONNECTED) {
-        Serial.println("WiFi not connected, cannot send data");
         sendDefaultCommand();
         return;
     }
@@ -255,9 +386,7 @@ void handleSensorData(String jsonData) {
         imageBuffer = "";
     }
     
-    Serial.println("Sending data to server...");
-    
-    // Отправляем HTTP POST запрос
+    // Отправляем HTTP POST запрос (без отладочных сообщений - они мешают протоколу!)
     HTTPClient http;
     http.begin(wifiClient, SERVER_URL);
     http.addHeader("Content-Type", "application/json");
@@ -266,20 +395,13 @@ void handleSensorData(String jsonData) {
     int httpCode = http.POST(jsonData);
     
     if (httpCode > 0) {
-        Serial.print("HTTP Response: ");
-        Serial.println(httpCode);
-        
         if (httpCode == HTTP_CODE_OK) {
             String response = http.getString();
             handleServerResponse(response);
         } else {
-            Serial.print("HTTP Error: ");
-            Serial.println(httpCode);
             sendDefaultCommand();
         }
     } else {
-        Serial.print("HTTP Request failed: ");
-        Serial.println(http.errorToString(httpCode));
         sendDefaultCommand();
     }
     
@@ -287,11 +409,9 @@ void handleSensorData(String jsonData) {
 }
 
 void handleServerResponse(String response) {
-    Serial.print("Server response: ");
-    Serial.println(response);
-    
     // Отправляем команду на Arduino Due
     // Формат: CMD {"command": "FORWARD", "duration_ms": 3000}
+    // ВАЖНО: никаких других Serial.print здесь - они мешают протоколу!
     Serial.print("CMD ");
     Serial.println(response);
 }

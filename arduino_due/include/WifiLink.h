@@ -42,6 +42,12 @@ private:
     char lineBuffer[LINE_BUFFER_SIZE];
     size_t lineBufferPos;
     
+    // Константы для чанкированной передачи изображения
+    static const size_t CHUNK_RAW_SIZE = 192;      // 192 байт raw = 256 байт base64
+    static const size_t CHUNK_BASE64_SIZE = 256;   // Размер base64 чанка
+    static const uint8_t MAX_RETRIES = 3;          // Макс. попыток передачи чанка
+    static const uint32_t ACK_TIMEOUT_MS = 500;    // Таймаут ожидания ACK (увеличен для 115200)
+    
     /**
      * Форматирование временной метки в строку "dd:MM:yyyy hh:mm:ss"
      */
@@ -57,9 +63,37 @@ private:
     bool readLine(char* buffer, size_t bufferSize, uint32_t timeoutMs);
     
     /**
-     * Base64 кодирование изображения (inline)
+     * CRC16-CCITT вычисление для проверки целостности
+     * @param data указатель на данные
+     * @param len длина данных
+     * @return 16-битная контрольная сумма
      */
-    void sendImageBase64(const uint8_t* data, size_t size);
+    uint16_t crc16_ccitt(const uint8_t* data, size_t len);
+    
+    /**
+     * Отправка изображения с чанкированием и подтверждением
+     * @param data указатель на raw данные изображения
+     * @param size размер данных
+     * @param width ширина изображения
+     * @param height высота изображения
+     * @return true если передача успешна
+     */
+    bool sendImageChunked(const uint8_t* data, size_t size, uint16_t width, uint16_t height);
+    
+    /**
+     * Отправка одного чанка с ожиданием ACK
+     * @param chunkIdx индекс чанка
+     * @param base64Data base64-закодированные данные чанка
+     * @return true если ACK получен
+     */
+    bool sendChunkWithAck(uint16_t chunkIdx, const char* base64Data);
+    
+    /**
+     * Ожидание ACK/NAK от NodeMCU
+     * @param expectedChunkIdx ожидаемый индекс чанка
+     * @return true если ACK получен для нужного чанка
+     */
+    bool waitForAck(uint16_t expectedChunkIdx);
 };
 
 #endif // WIFI_LINK_H
