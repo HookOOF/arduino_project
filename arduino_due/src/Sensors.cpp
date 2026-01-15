@@ -39,7 +39,7 @@ SensorSnapshot Sensors::readSnapshot() {
     SensorSnapshot snapshot = {0};
     
     // Чтение HC-SR04
-    snapshot.distanceCm = readHCSR04();
+    snapshot.distanceCm = readHCHCSR04();
     
     // Чтение фоторезистора
     snapshot.isDark = readLightSensor(snapshot.lightRaw);
