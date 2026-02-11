@@ -13,13 +13,14 @@ import os
 import base64
 import json
 import logging
+import time
 from datetime import datetime
 from typing import Optional, List, Dict, Any
 from io import BytesIO
 from pathlib import Path
 
 from fastapi import FastAPI, Request, HTTPException
-from fastapi.responses import JSONResponse, FileResponse
+from fastapi.responses import JSONResponse, FileResponse, HTMLResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
@@ -138,6 +139,10 @@ MAX_METRICS_HISTORY = 1000  # Максимум записей
 # Список сохранённых изображений
 saved_images: List[Dict[str, Any]] = []
 
+# История LLM взаимодействий (промпт → ответ)
+llm_log: List[Dict[str, Any]] = []
+MAX_LLM_LOG = 500
+
 # ==================== ФОРМИРОВАНИЕ ПРОМПТА ====================
 
 SYSTEM_PROMPT = """You are an AI controller for a small autonomous car. 
@@ -161,6 +166,9 @@ Rules for decision making:
 5. Use MPU6050 data to detect if the car is tilted or unstable
 
 Always prioritize safety - when in doubt, STOP."""
+
+# Текущий системный промпт (изменяемый в рантайме)
+current_system_prompt: str = SYSTEM_PROMPT
 
 
 def build_user_prompt(data: CarDataRequest) -> str:
@@ -309,16 +317,55 @@ def decode_image_for_vision(image_data: ImageData) -> Optional[str]:
 
 async def get_llm_command(data: CarDataRequest) -> CommandResponse:
     """Получение команды от LLM"""
+    global llm_log
     
     if DEMO_MODE or not openai_client:
         # Демо режим - простая логика без LLM
-        return get_demo_command(data)
+        result = get_demo_command(data)
+        # Логируем даже демо-команды
+        llm_log.append({
+            "timestamp": datetime.now().isoformat(),
+            "session_id": data.session_id,
+            "step": data.step,
+            "mode": "DEMO",
+            "system_prompt": None,
+            "user_prompt": build_user_prompt(data),
+            "raw_response": None,
+            "parsed_command": result.command,
+            "parsed_duration_ms": result.duration_ms,
+            "latency_ms": 0,
+            "error": None,
+            "image_sent": False,
+        })
+        if len(llm_log) > MAX_LLM_LOG:
+            llm_log.pop(0)
+        return result
+    
+    t_start = time.time()
+    log_entry: Dict[str, Any] = {
+        "timestamp": datetime.now().isoformat(),
+        "session_id": data.session_id,
+        "step": data.step,
+        "mode": "LLM",
+        "system_prompt": current_system_prompt,
+        "user_prompt": None,
+        "raw_response": None,
+        "parsed_command": None,
+        "parsed_duration_ms": None,
+        "latency_ms": None,
+        "error": None,
+        "image_sent": False,
+        "model": API_MODEL,
+        "tokens_prompt": None,
+        "tokens_completion": None,
+    }
     
     try:
         user_prompt = build_user_prompt(data)
+        log_entry["user_prompt"] = user_prompt
         
         messages = [
-            {"role": "system", "content": SYSTEM_PROMPT},
+            {"role": "system", "content": current_system_prompt},
             {"role": "user", "content": user_prompt}
         ]
         
@@ -345,7 +392,7 @@ async def get_llm_command(data: CarDataRequest) -> CommandResponse:
             # Vision запрос с изображением
             logger.info("Sending request to LLM Vision API with image")
             messages = [
-                {"role": "system", "content": SYSTEM_PROMPT},
+                {"role": "system", "content": current_system_prompt},
                 {
                     "role": "user",
                     "content": [
@@ -354,6 +401,7 @@ async def get_llm_command(data: CarDataRequest) -> CommandResponse:
                     ]
                 }
             ]
+            log_entry["image_sent"] = True
         else:
             # Текстовый запрос без изображения
             if image_available and not supports_vision:
@@ -368,9 +416,18 @@ async def get_llm_command(data: CarDataRequest) -> CommandResponse:
             temperature=0.3,
         )
         
+        latency_ms = round((time.time() - t_start) * 1000)
+        log_entry["latency_ms"] = latency_ms
+        
+        # Извлекаем информацию о токенах если доступна
+        if response.usage:
+            log_entry["tokens_prompt"] = response.usage.prompt_tokens
+            log_entry["tokens_completion"] = response.usage.completion_tokens
+        
         # Парсинг ответа
         content = response.choices[0].message.content.strip()
         logger.info(f"LLM response: {content}")
+        log_entry["raw_response"] = content
         
         # Извлекаем JSON из ответа
         try:
@@ -389,15 +446,36 @@ async def get_llm_command(data: CarDataRequest) -> CommandResponse:
                     logger.warning(f"Invalid command from LLM: {command}, using STOP")
                     command = "STOP"
                 
+                log_entry["parsed_command"] = command
+                log_entry["parsed_duration_ms"] = duration
+                
+                llm_log.append(log_entry)
+                if len(llm_log) > MAX_LLM_LOG:
+                    llm_log.pop(0)
+                
                 return CommandResponse(command=command, duration_ms=duration)
         except json.JSONDecodeError as e:
             logger.error(f"Failed to parse LLM JSON response: {e}")
+            log_entry["error"] = f"JSON parse error: {e}"
         
         # Если не удалось распарсить, используем STOP
+        log_entry["parsed_command"] = "STOP"
+        log_entry["parsed_duration_ms"] = DEFAULT_DURATION_MS
+        llm_log.append(log_entry)
+        if len(llm_log) > MAX_LLM_LOG:
+            llm_log.pop(0)
+        
         return CommandResponse(command="STOP", duration_ms=DEFAULT_DURATION_MS)
         
     except Exception as e:
         logger.error(f"OpenAI API error: {e}")
+        log_entry["error"] = str(e)
+        log_entry["latency_ms"] = round((time.time() - t_start) * 1000)
+        log_entry["parsed_command"] = "STOP"
+        log_entry["parsed_duration_ms"] = DEFAULT_DURATION_MS
+        llm_log.append(log_entry)
+        if len(llm_log) > MAX_LLM_LOG:
+            llm_log.pop(0)
         return CommandResponse(command="STOP", duration_ms=DEFAULT_DURATION_MS)
 
 
@@ -702,6 +780,147 @@ async def get_config():
     }
 
 
+# ==================== SYSTEM PROMPT ENDPOINTS ====================
+
+@app.get("/system-prompt")
+async def get_system_prompt():
+    """Получение текущего системного промпта"""
+    return {
+        "system_prompt": current_system_prompt,
+        "default_prompt": SYSTEM_PROMPT,
+        "is_default": current_system_prompt == SYSTEM_PROMPT,
+    }
+
+
+@app.put("/system-prompt")
+async def set_system_prompt(request: Request):
+    """Изменение системного промпта на лету"""
+    global current_system_prompt
+    body = await request.json()
+    new_prompt = body.get("system_prompt", "").strip()
+    if not new_prompt:
+        raise HTTPException(status_code=400, detail="system_prompt cannot be empty")
+    current_system_prompt = new_prompt
+    logger.info(f"System prompt updated ({len(new_prompt)} chars)")
+    return {"status": "updated", "length": len(new_prompt)}
+
+
+@app.post("/system-prompt/reset")
+async def reset_system_prompt():
+    """Сброс системного промпта к значению по умолчанию"""
+    global current_system_prompt
+    current_system_prompt = SYSTEM_PROMPT
+    logger.info("System prompt reset to default")
+    return {"status": "reset", "system_prompt": current_system_prompt}
+
+
+# ==================== LLM LOG ENDPOINTS ====================
+
+@app.get("/llm-log")
+async def get_llm_log(limit: int = 50):
+    """Получение лога LLM взаимодействий"""
+    return {
+        "total": len(llm_log),
+        "entries": llm_log[-limit:]
+    }
+
+
+@app.get("/llm-log/latest")
+async def get_latest_llm_log():
+    """Получение последней записи лога LLM"""
+    if not llm_log:
+        return {"error": "No LLM log entries"}
+    return llm_log[-1]
+
+
+@app.delete("/llm-log")
+async def clear_llm_log():
+    """Очистка лога LLM"""
+    llm_log.clear()
+    return {"status": "cleared"}
+
+
+@app.get("/llm-log/stats")
+async def get_llm_log_stats():
+    """Статистика LLM лога"""
+    if not llm_log:
+        return {"total": 0}
+    
+    latencies = [e["latency_ms"] for e in llm_log if e.get("latency_ms") is not None and e["latency_ms"] > 0]
+    errors = [e for e in llm_log if e.get("error")]
+    commands_count: Dict[str, int] = {}
+    for e in llm_log:
+        cmd = e.get("parsed_command", "UNKNOWN")
+        commands_count[cmd] = commands_count.get(cmd, 0) + 1
+    
+    return {
+        "total": len(llm_log),
+        "errors": len(errors),
+        "error_rate": round(len(errors) / len(llm_log) * 100, 1) if llm_log else 0,
+        "latency": {
+            "min_ms": min(latencies) if latencies else 0,
+            "max_ms": max(latencies) if latencies else 0,
+            "avg_ms": round(sum(latencies) / len(latencies)) if latencies else 0,
+        },
+        "commands_distribution": commands_count,
+    }
+
+
+# ==================== DASHBOARD ====================
+
+@app.get("/dashboard", response_class=HTMLResponse)
+async def dashboard():
+    """Веб-интерфейс для мониторинга"""
+    dashboard_path = Path(__file__).parent / "static" / "dashboard.html"
+    if not dashboard_path.exists():
+        raise HTTPException(status_code=404, detail="Dashboard not found")
+    return HTMLResponse(content=dashboard_path.read_text(encoding="utf-8"))
+
+
+# Полная сводка для dashboard polling
+@app.get("/dashboard/poll")
+async def dashboard_poll():
+    """Единый endpoint для polling всех данных дашборда"""
+    latest_metrics = metrics_history[-1] if metrics_history else None
+    latest_llm = llm_log[-1] if llm_log else None
+    
+    # Статистика по командам
+    commands_count: Dict[str, int] = {}
+    for e in llm_log:
+        cmd = e.get("parsed_command", "UNKNOWN")
+        commands_count[cmd] = commands_count.get(cmd, 0) + 1
+    
+    # Статистика latency
+    latencies = [e["latency_ms"] for e in llm_log if e.get("latency_ms") and e["latency_ms"] > 0]
+    
+    return {
+        "status": {
+            "mode": "DEMO" if DEMO_MODE else "LLM",
+            "model": API_MODEL,
+            "api_base": API_BASE_URL if not DEMO_MODE else "N/A",
+            "commands_processed": len(command_history),
+            "metrics_stored": len(metrics_history),
+            "llm_log_count": len(llm_log),
+            "images_saved": len(saved_images),
+            "uptime": datetime.now().isoformat(),
+        },
+        "latest_metrics": latest_metrics,
+        "latest_llm": latest_llm,
+        "recent_commands": command_history[-20:],
+        "recent_llm_log": llm_log[-20:],
+        "recent_metrics": metrics_history[-50:],
+        "system_prompt": current_system_prompt,
+        "is_default_prompt": current_system_prompt == SYSTEM_PROMPT,
+        "commands_distribution": commands_count,
+        "latency_stats": {
+            "min_ms": min(latencies) if latencies else 0,
+            "max_ms": max(latencies) if latencies else 0,
+            "avg_ms": round(sum(latencies) / len(latencies)) if latencies else 0,
+        },
+        "error_count": sum(1 for e in llm_log if e.get("error")),
+    }
+
+
 # ==================== ЗАПУСК ====================
 
 if __name__ == "__main__":
@@ -713,6 +932,7 @@ if __name__ == "__main__":
         print(f"  API: {API_BASE_URL}")
         print(f"  Model: {API_MODEL}")
     print(f"  Server: http://0.0.0.0:8000")
+    print(f"  Dashboard: http://0.0.0.0:8000/dashboard")
     print("=" * 50 + "\n")
     
     if DEMO_MODE:

@@ -1,0 +1,822 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>LLM Car Controller — Dashboard</title>
+<style>
+:root {
+  --bg: #0f1117;
+  --surface: #1a1d27;
+  --surface2: #232736;
+  --border: #2e3348;
+  --text: #e1e4ed;
+  --text2: #8b90a5;
+  --accent: #6c5ce7;
+  --accent2: #a29bfe;
+  --green: #00cec9;
+  --red: #ff7675;
+  --orange: #fdcb6e;
+  --blue: #74b9ff;
+  --radius: 10px;
+}
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body {
+  font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;
+  background: var(--bg);
+  color: var(--text);
+  min-height: 100vh;
+}
+/* Scrollbar */
+::-webkit-scrollbar { width: 6px; height: 6px; }
+::-webkit-scrollbar-track { background: var(--surface); }
+::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+::-webkit-scrollbar-thumb:hover { background: var(--text2); }
+
+/* Header */
+header {
+  background: var(--surface);
+  border-bottom: 1px solid var(--border);
+  padding: 12px 24px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  position: sticky;
+  top: 0;
+  z-index: 100;
+}
+header h1 {
+  font-size: 18px;
+  font-weight: 600;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+header h1 .dot {
+  width: 8px; height: 8px;
+  border-radius: 50%;
+  background: var(--green);
+  animation: pulse 2s infinite;
+}
+@keyframes pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: .4; }
+}
+.header-meta {
+  display: flex;
+  gap: 16px;
+  font-size: 13px;
+  color: var(--text2);
+}
+.header-meta .badge {
+  background: var(--surface2);
+  padding: 4px 10px;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+}
+.badge.mode-llm { border-color: var(--green); color: var(--green); }
+.badge.mode-demo { border-color: var(--orange); color: var(--orange); }
+
+/* Layout */
+.grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 16px;
+  padding: 16px 24px;
+  max-width: 1600px;
+  margin: 0 auto;
+}
+.grid .full { grid-column: 1 / -1; }
+
+/* Cards */
+.card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  overflow: hidden;
+}
+.card-header {
+  padding: 12px 16px;
+  border-bottom: 1px solid var(--border);
+  font-size: 13px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: .5px;
+  color: var(--text2);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+.card-body {
+  padding: 16px;
+}
+
+/* Stats Row */
+.stats-row {
+  display: flex;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+.stat-box {
+  flex: 1;
+  min-width: 120px;
+  background: var(--surface2);
+  border-radius: 8px;
+  padding: 12px 14px;
+  text-align: center;
+}
+.stat-box .label {
+  font-size: 11px;
+  color: var(--text2);
+  text-transform: uppercase;
+  letter-spacing: .3px;
+  margin-bottom: 4px;
+}
+.stat-box .value {
+  font-size: 22px;
+  font-weight: 700;
+}
+.stat-box .value.green { color: var(--green); }
+.stat-box .value.orange { color: var(--orange); }
+.stat-box .value.blue { color: var(--blue); }
+.stat-box .value.red { color: var(--red); }
+.stat-box .value.accent { color: var(--accent2); }
+
+/* Charts area */
+.chart-container {
+  height: 180px;
+  position: relative;
+}
+canvas { width: 100% !important; height: 100% !important; }
+
+/* LLM Log */
+.log-entries {
+  max-height: 420px;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.log-entry {
+  background: var(--surface2);
+  border-radius: 8px;
+  padding: 12px;
+  border-left: 3px solid var(--accent);
+  font-size: 13px;
+}
+.log-entry.error { border-left-color: var(--red); }
+.log-entry .log-meta {
+  display: flex;
+  gap: 12px;
+  margin-bottom: 8px;
+  font-size: 11px;
+  color: var(--text2);
+}
+.log-entry .log-meta span { display: flex; align-items: center; gap: 4px; }
+.log-entry .log-section {
+  margin-top: 8px;
+}
+.log-entry .log-section-title {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: .5px;
+  color: var(--text2);
+  margin-bottom: 4px;
+}
+.log-entry pre {
+  background: var(--bg);
+  border-radius: 6px;
+  padding: 8px 10px;
+  font-size: 12px;
+  font-family: 'Cascadia Code', 'Fira Code', 'Consolas', monospace;
+  white-space: pre-wrap;
+  word-break: break-all;
+  max-height: 200px;
+  overflow-y: auto;
+  color: var(--text);
+  line-height: 1.5;
+}
+.cmd-badge {
+  display: inline-block;
+  padding: 2px 8px;
+  border-radius: 4px;
+  font-size: 12px;
+  font-weight: 600;
+}
+.cmd-FORWARD { background: #00cec933; color: var(--green); }
+.cmd-BACKWARD { background: #ff767533; color: var(--red); }
+.cmd-LEFT { background: #fdcb6e33; color: var(--orange); }
+.cmd-RIGHT { background: #74b9ff33; color: var(--blue); }
+.cmd-STOP { background: #636e7233; color: var(--text2); }
+
+/* Command history */
+.cmd-list {
+  max-height: 320px;
+  overflow-y: auto;
+}
+.cmd-list table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+}
+.cmd-list th, .cmd-list td {
+  padding: 6px 10px;
+  text-align: left;
+  border-bottom: 1px solid var(--border);
+}
+.cmd-list th {
+  font-size: 11px;
+  color: var(--text2);
+  text-transform: uppercase;
+  letter-spacing: .3px;
+  position: sticky;
+  top: 0;
+  background: var(--surface);
+}
+
+/* System prompt */
+.prompt-editor {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.prompt-editor textarea {
+  width: 100%;
+  min-height: 180px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  color: var(--text);
+  font-family: 'Cascadia Code', 'Fira Code', 'Consolas', monospace;
+  font-size: 13px;
+  padding: 12px;
+  resize: vertical;
+  line-height: 1.5;
+}
+.prompt-editor textarea:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+.prompt-actions {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+.btn {
+  padding: 8px 18px;
+  border-radius: 6px;
+  border: none;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all .15s;
+}
+.btn-primary {
+  background: var(--accent);
+  color: #fff;
+}
+.btn-primary:hover { background: #5a4bd1; }
+.btn-secondary {
+  background: var(--surface2);
+  color: var(--text);
+  border: 1px solid var(--border);
+}
+.btn-secondary:hover { background: var(--border); }
+.btn-danger {
+  background: transparent;
+  color: var(--red);
+  border: 1px solid var(--red);
+}
+.btn-danger:hover { background: #ff767520; }
+.prompt-status {
+  font-size: 12px;
+  color: var(--text2);
+  margin-left: auto;
+}
+.prompt-status.saved { color: var(--green); }
+.prompt-status.modified { color: var(--orange); }
+
+/* Distribution bar */
+.dist-bar {
+  display: flex;
+  height: 24px;
+  border-radius: 6px;
+  overflow: hidden;
+  margin-top: 8px;
+}
+.dist-bar .segment {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 10px;
+  font-weight: 600;
+  min-width: 24px;
+  transition: width .3s;
+}
+.dist-legend {
+  display: flex;
+  gap: 12px;
+  margin-top: 8px;
+  flex-wrap: wrap;
+}
+.dist-legend .item {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 12px;
+  color: var(--text2);
+}
+.dist-legend .swatch {
+  width: 10px;
+  height: 10px;
+  border-radius: 3px;
+}
+
+/* Latest image */
+.latest-img {
+  text-align: center;
+}
+.latest-img img {
+  max-width: 100%;
+  max-height: 200px;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  image-rendering: pixelated;
+}
+.latest-img .no-img {
+  color: var(--text2);
+  font-size: 13px;
+  padding: 40px;
+}
+
+/* Toggle Details */
+.toggle-btn {
+  background: none;
+  border: none;
+  color: var(--accent2);
+  font-size: 12px;
+  cursor: pointer;
+  padding: 2px 6px;
+}
+.toggle-btn:hover { text-decoration: underline; }
+
+/* Responsive */
+@media (max-width: 900px) {
+  .grid { grid-template-columns: 1fr; padding: 12px; }
+}
+</style>
+</head>
+<body>
+
+<header>
+  <h1><span class="dot" id="statusDot"></span> LLM Car Controller</h1>
+  <div class="header-meta">
+    <span class="badge" id="modeBadge">—</span>
+    <span class="badge" id="modelBadge">—</span>
+    <span class="badge" id="pollBadge">polling: 2s</span>
+  </div>
+</header>
+
+<div class="grid">
+  <!-- Stats -->
+  <div class="card full">
+    <div class="card-header">Overview</div>
+    <div class="card-body">
+      <div class="stats-row">
+        <div class="stat-box"><div class="label">Commands</div><div class="value green" id="statCmds">0</div></div>
+        <div class="stat-box"><div class="label">Metrics</div><div class="value blue" id="statMetrics">0</div></div>
+        <div class="stat-box"><div class="label">LLM Calls</div><div class="value accent" id="statLLM">0</div></div>
+        <div class="stat-box"><div class="label">Errors</div><div class="value red" id="statErrors">0</div></div>
+        <div class="stat-box"><div class="label">Avg Latency</div><div class="value orange" id="statLatency">— ms</div></div>
+        <div class="stat-box"><div class="label">Images</div><div class="value blue" id="statImages">0</div></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Distance Chart -->
+  <div class="card">
+    <div class="card-header">Distance (cm) — last 50</div>
+    <div class="card-body">
+      <div class="chart-container"><canvas id="distChart"></canvas></div>
+    </div>
+  </div>
+
+  <!-- Light Chart -->
+  <div class="card">
+    <div class="card-header">Light Level — last 50</div>
+    <div class="card-body">
+      <div class="chart-container"><canvas id="lightChart"></canvas></div>
+    </div>
+  </div>
+
+  <!-- Latency Chart -->
+  <div class="card">
+    <div class="card-header">LLM Latency (ms) — last 20</div>
+    <div class="card-body">
+      <div class="chart-container"><canvas id="latencyChart"></canvas></div>
+    </div>
+  </div>
+
+  <!-- Commands Distribution -->
+  <div class="card">
+    <div class="card-header">Commands Distribution</div>
+    <div class="card-body">
+      <div class="dist-bar" id="distBar"></div>
+      <div class="dist-legend" id="distLegend"></div>
+      <div style="margin-top: 12px;">
+        <div class="chart-container"><canvas id="cmdChart"></canvas></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- LLM Log -->
+  <div class="card full">
+    <div class="card-header">
+      LLM Interaction Log
+      <button class="btn btn-danger" style="padding:4px 10px;font-size:11px;" onclick="clearLLMLog()">Clear</button>
+    </div>
+    <div class="card-body">
+      <div class="log-entries" id="llmLog">
+        <div style="color:var(--text2);text-align:center;padding:20px;">No LLM interactions yet</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- System Prompt -->
+  <div class="card full">
+    <div class="card-header">
+      System Prompt
+      <span class="prompt-status" id="promptStatus"></span>
+    </div>
+    <div class="card-body">
+      <div class="prompt-editor">
+        <textarea id="promptTextarea" spellcheck="false"></textarea>
+        <div class="prompt-actions">
+          <button class="btn btn-primary" onclick="savePrompt()">Save Prompt</button>
+          <button class="btn btn-secondary" onclick="resetPrompt()">Reset to Default</button>
+          <span class="prompt-status" id="promptMsg"></span>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Command History -->
+  <div class="card">
+    <div class="card-header">
+      Recent Commands
+      <button class="btn btn-danger" style="padding:4px 10px;font-size:11px;" onclick="clearHistory()">Clear</button>
+    </div>
+    <div class="card-body">
+      <div class="cmd-list" id="cmdList">
+        <table>
+          <thead><tr><th>Step</th><th>Command</th><th>Duration</th><th>Time</th></tr></thead>
+          <tbody id="cmdTableBody"></tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  <!-- Latest Image -->
+  <div class="card">
+    <div class="card-header">Latest Camera Image</div>
+    <div class="card-body">
+      <div class="latest-img" id="latestImg">
+        <div class="no-img">No images captured yet</div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Chart.js from CDN -->
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.7/dist/chart.umd.min.js"></script>
+
+<script>
+// ===== State =====
+let prevData = null;
+let promptLoadedFromServer = false;
+let promptUserModified = false;
+let serverPrompt = '';
+
+// ===== Chart Setup =====
+const chartDefaults = {
+  responsive: true,
+  maintainAspectRatio: false,
+  animation: { duration: 300 },
+  plugins: { legend: { display: false } },
+  scales: {
+    x: { display: false },
+    y: {
+      grid: { color: '#2e334822' },
+      ticks: { color: '#8b90a5', font: { size: 10 } }
+    }
+  }
+};
+
+function makeLineChart(ctx, color, label) {
+  return new Chart(ctx, {
+    type: 'line',
+    data: {
+      labels: [],
+      datasets: [{
+        label,
+        data: [],
+        borderColor: color,
+        backgroundColor: color + '22',
+        fill: true,
+        tension: 0.3,
+        pointRadius: 2,
+        borderWidth: 2,
+      }]
+    },
+    options: { ...chartDefaults }
+  });
+}
+
+function makeBarChart(ctx) {
+  return new Chart(ctx, {
+    type: 'bar',
+    data: {
+      labels: [],
+      datasets: [{
+        data: [],
+        backgroundColor: [],
+        borderRadius: 4,
+      }]
+    },
+    options: {
+      ...chartDefaults,
+      scales: {
+        ...chartDefaults.scales,
+        x: { grid: { display: false }, ticks: { color: '#8b90a5', font: { size: 10 } } }
+      }
+    }
+  });
+}
+
+const distChart = makeLineChart(document.getElementById('distChart'), '#00cec9', 'Distance');
+const lightChart = makeLineChart(document.getElementById('lightChart'), '#fdcb6e', 'Light');
+const latencyChart = makeLineChart(document.getElementById('latencyChart'), '#a29bfe', 'Latency');
+const cmdChart = makeBarChart(document.getElementById('cmdChart'));
+
+const CMD_COLORS = {
+  FORWARD: '#00cec9',
+  BACKWARD: '#ff7675',
+  LEFT: '#fdcb6e',
+  RIGHT: '#74b9ff',
+  STOP: '#636e72',
+  UNKNOWN: '#b2bec3',
+};
+
+// ===== Update Functions =====
+
+function updateChartData(chart, labels, data) {
+  chart.data.labels = labels;
+  chart.data.datasets[0].data = data;
+  chart.update('none');
+}
+
+function updateStats(d) {
+  document.getElementById('statCmds').textContent = d.status.commands_processed;
+  document.getElementById('statMetrics').textContent = d.status.metrics_stored;
+  document.getElementById('statLLM').textContent = d.status.llm_log_count;
+  document.getElementById('statErrors').textContent = d.error_count;
+  document.getElementById('statLatency').textContent = d.latency_stats.avg_ms ? d.latency_stats.avg_ms + ' ms' : '— ms';
+  document.getElementById('statImages').textContent = d.status.images_saved;
+  
+  // Mode badge
+  const mb = document.getElementById('modeBadge');
+  mb.textContent = d.status.mode;
+  mb.className = 'badge mode-' + d.status.mode.toLowerCase();
+  
+  document.getElementById('modelBadge').textContent = d.status.model;
+}
+
+function updateCharts(d) {
+  // Distance
+  const metrics = d.recent_metrics || [];
+  const distLabels = metrics.map((_, i) => i);
+  const distData = metrics.map(m => m.sensors.distance_cm);
+  updateChartData(distChart, distLabels, distData);
+  
+  // Light
+  const lightData = metrics.map(m => m.sensors.light_raw);
+  updateChartData(lightChart, distLabels, lightData);
+  
+  // Latency
+  const llmEntries = d.recent_llm_log || [];
+  const latData = llmEntries.filter(e => e.latency_ms > 0).slice(-20);
+  const latLabels = latData.map((_, i) => i);
+  const latValues = latData.map(e => e.latency_ms);
+  updateChartData(latencyChart, latLabels, latValues);
+  
+  // Commands distribution
+  const dist = d.commands_distribution || {};
+  const cmds = Object.keys(dist);
+  const vals = Object.values(dist);
+  cmdChart.data.labels = cmds;
+  cmdChart.data.datasets[0].data = vals;
+  cmdChart.data.datasets[0].backgroundColor = cmds.map(c => CMD_COLORS[c] || CMD_COLORS.UNKNOWN);
+  cmdChart.update('none');
+  
+  // Distribution bar
+  const total = vals.reduce((a, b) => a + b, 0) || 1;
+  const bar = document.getElementById('distBar');
+  const legend = document.getElementById('distLegend');
+  bar.innerHTML = cmds.map(c => {
+    const pct = (dist[c] / total * 100).toFixed(1);
+    const color = CMD_COLORS[c] || CMD_COLORS.UNKNOWN;
+    return `<div class="segment" style="width:${pct}%;background:${color}55;color:${color}">${pct > 5 ? c : ''}</div>`;
+  }).join('');
+  legend.innerHTML = cmds.map(c => {
+    const color = CMD_COLORS[c] || CMD_COLORS.UNKNOWN;
+    return `<div class="item"><span class="swatch" style="background:${color}"></span>${c}: ${dist[c]}</div>`;
+  }).join('');
+}
+
+function formatTime(ts) {
+  if (!ts) return '—';
+  try {
+    const d = new Date(ts);
+    return d.toLocaleTimeString();
+  } catch { return ts; }
+}
+
+function escapeHtml(str) {
+  if (!str) return '';
+  return str.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+}
+
+function updateLLMLog(d) {
+  const entries = (d.recent_llm_log || []).slice().reverse();
+  const container = document.getElementById('llmLog');
+  
+  if (entries.length === 0) {
+    container.innerHTML = '<div style="color:var(--text2);text-align:center;padding:20px;">No LLM interactions yet</div>';
+    return;
+  }
+  
+  container.innerHTML = entries.map((e, idx) => {
+    const cls = e.error ? 'log-entry error' : 'log-entry';
+    const cmdCls = 'cmd-badge cmd-' + (e.parsed_command || 'STOP');
+    const id = 'logdetail_' + idx;
+    return `
+      <div class="${cls}">
+        <div class="log-meta">
+          <span>Step ${e.step}</span>
+          <span>Session ${e.session_id}</span>
+          <span>${e.mode}</span>
+          <span>${e.latency_ms != null ? e.latency_ms + 'ms' : '—'}</span>
+          ${e.tokens_prompt ? `<span>${e.tokens_prompt}+${e.tokens_completion} tok</span>` : ''}
+          ${e.image_sent ? '<span>IMG</span>' : ''}
+          <span>${formatTime(e.timestamp)}</span>
+        </div>
+        <div>
+          Result: <span class="${cmdCls}">${e.parsed_command || '?'}</span>
+          <span style="color:var(--text2);margin-left:6px;">${e.parsed_duration_ms || 0}ms</span>
+          ${e.error ? `<span style="color:var(--red);margin-left:8px;">Error: ${escapeHtml(e.error)}</span>` : ''}
+          <button class="toggle-btn" onclick="toggleDetail('${id}')">details</button>
+        </div>
+        <div id="${id}" style="display:none;">
+          ${e.raw_response ? `<div class="log-section"><div class="log-section-title">LLM Raw Response</div><pre>${escapeHtml(e.raw_response)}</pre></div>` : ''}
+          ${e.user_prompt ? `<div class="log-section"><div class="log-section-title">User Prompt</div><pre>${escapeHtml(e.user_prompt)}</pre></div>` : ''}
+          ${e.system_prompt ? `<div class="log-section"><div class="log-section-title">System Prompt (at time of call)</div><pre>${escapeHtml(e.system_prompt)}</pre></div>` : ''}
+        </div>
+      </div>`;
+  }).join('');
+}
+
+function toggleDetail(id) {
+  const el = document.getElementById(id);
+  if (el) el.style.display = el.style.display === 'none' ? 'block' : 'none';
+}
+
+function updateCommandHistory(d) {
+  const cmds = (d.recent_commands || []).slice().reverse();
+  const tbody = document.getElementById('cmdTableBody');
+  tbody.innerHTML = cmds.map(c => `
+    <tr>
+      <td>${c.step}</td>
+      <td><span class="cmd-badge cmd-${c.command}">${c.command}</span></td>
+      <td>${c.duration_ms}ms</td>
+      <td style="color:var(--text2);font-size:12px;">${formatTime(c.timestamp)}</td>
+    </tr>`).join('');
+}
+
+function updatePrompt(d) {
+  if (!promptLoadedFromServer) {
+    document.getElementById('promptTextarea').value = d.system_prompt;
+    serverPrompt = d.system_prompt;
+    promptLoadedFromServer = true;
+  }
+  // Update server prompt reference for comparison
+  serverPrompt = d.system_prompt;
+  
+  const status = document.getElementById('promptStatus');
+  if (d.is_default_prompt) {
+    status.textContent = 'Default';
+    status.className = 'prompt-status';
+  } else {
+    status.textContent = 'Custom';
+    status.className = 'prompt-status modified';
+  }
+  
+  // Check if textarea differs from server
+  const ta = document.getElementById('promptTextarea');
+  if (ta.value !== serverPrompt && document.activeElement !== ta) {
+    // Only update if user is not editing
+    ta.value = serverPrompt;
+  }
+}
+
+function updateImage(d) {
+  const container = document.getElementById('latestImg');
+  if (d.status.images_saved > 0) {
+    container.innerHTML = `<img src="/images/latest?t=${Date.now()}" alt="Latest camera image" onerror="this.parentElement.innerHTML='<div class=\\'no-img\\'>Failed to load image</div>'" />`;
+  }
+}
+
+// ===== Actions =====
+
+async function savePrompt() {
+  const text = document.getElementById('promptTextarea').value;
+  const msg = document.getElementById('promptMsg');
+  try {
+    const res = await fetch('/system-prompt', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ system_prompt: text })
+    });
+    if (res.ok) {
+      msg.textContent = 'Saved!';
+      msg.className = 'prompt-status saved';
+      serverPrompt = text;
+      setTimeout(() => { msg.textContent = ''; }, 3000);
+    } else {
+      const err = await res.json();
+      msg.textContent = 'Error: ' + (err.detail || 'Unknown');
+      msg.className = 'prompt-status';
+      msg.style.color = 'var(--red)';
+    }
+  } catch (e) {
+    msg.textContent = 'Network error';
+    msg.className = 'prompt-status';
+    msg.style.color = 'var(--red)';
+  }
+}
+
+async function resetPrompt() {
+  try {
+    const res = await fetch('/system-prompt/reset', { method: 'POST' });
+    if (res.ok) {
+      const data = await res.json();
+      document.getElementById('promptTextarea').value = data.system_prompt;
+      serverPrompt = data.system_prompt;
+      const msg = document.getElementById('promptMsg');
+      msg.textContent = 'Reset to default!';
+      msg.className = 'prompt-status saved';
+      setTimeout(() => { msg.textContent = ''; }, 3000);
+    }
+  } catch (e) { console.error(e); }
+}
+
+async function clearHistory() {
+  await fetch('/history', { method: 'DELETE' });
+}
+
+async function clearLLMLog() {
+  await fetch('/llm-log', { method: 'DELETE' });
+}
+
+// ===== Polling =====
+
+async function poll() {
+  try {
+    const res = await fetch('/dashboard/poll');
+    if (!res.ok) return;
+    const data = await res.json();
+    
+    updateStats(data);
+    updateCharts(data);
+    updateLLMLog(data);
+    updateCommandHistory(data);
+    updatePrompt(data);
+    updateImage(data);
+    
+    prevData = data;
+    
+    document.getElementById('statusDot').style.background = 'var(--green)';
+  } catch (e) {
+    document.getElementById('statusDot').style.background = 'var(--red)';
+    console.error('Poll error:', e);
+  }
+}
+
+// Initial + interval
+poll();
+setInterval(poll, 2000);
+</script>
+
+</body>
+</html>
+
+

@@ -27,7 +27,7 @@ const char* WIFI_SSID = "TP-Link_461B";
 const char* WIFI_PASSWORD = "9152910008";
 
 // Сервер настройки
-const char* SERVER_HOST = "192.168.0.93";  // Изменить на IP вашего сервера
+const char* SERVER_HOST = "192.168.0.93";  
 const int SERVER_PORT = 8000;
 String SERVER_URL = "http://192.168.0.93:8000/command";  // Изменить на IP вашего сервера
 
@@ -53,7 +53,7 @@ struct ImageTransfer {
     uint16_t totalChunks;
     uint16_t expectedCrc;
     uint16_t receivedChunks;
-    String buffer;              // ~7KB для 80x60 base64
+    String buffer;
     bool transferInProgress;
     
     void reset() {
