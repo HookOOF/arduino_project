@@ -12,6 +12,10 @@
 #define REG_PID         0x0A
 #define REG_VER         0x0B
 #define REG_COM3        0x0C
+#define REG_COM4        0x0D
+#define REG_COM5        0x0E
+#define REG_COM6        0x0F
+#define REG_CLKRC       0x11
 #define REG_COM7        0x12
 #define REG_COM8        0x13
 #define REG_COM9        0x14
@@ -29,27 +33,36 @@
 #define REG_HREF        0x32
 #define REG_TSLB        0x3A
 #define REG_COM11       0x3B
+#define REG_COM12       0x3C
 #define REG_COM13       0x3D
 #define REG_COM14       0x3E
 #define REG_EDGE        0x3F
 #define REG_COM15       0x40
 #define REG_COM16       0x41
 #define REG_COM17       0x42
+#define REG_DENOISE     0x4C
 #define REG_BRIGHT      0x55
 #define REG_CONTRAST    0x56
 #define REG_MANU        0x67
 #define REG_MANV        0x68
 #define REG_GFIX        0x69
 #define REG_GGAIN       0x6A
+#define REG_DBLV        0x6B
 #define REG_SCALING_XSC 0x70
 #define REG_SCALING_YSC 0x71
 #define REG_SCALING_DCWCTR 0x72
 #define REG_SCALING_PCLK_DIV 0x73
 #define REG_REG76       0x76
 #define REG_RGB444      0x8C
-#define REG_CLKRC       0x11
+#define REG_HAECC1      0x9F
+#define REG_HAECC2      0xA0
 #define REG_SCALING_PCLK_DELAY 0xA2
 #define REG_BD50MAX     0xA5
+#define REG_HAECC3      0xA6
+#define REG_HAECC4      0xA7
+#define REG_HAECC5      0xA8
+#define REG_HAECC6      0xA9
+#define REG_HAECC7      0xAA
 #define REG_BD60MAX     0xAB
 
 // COM7 values
@@ -57,25 +70,65 @@
 #define COM7_RGB        0x04
 #define COM7_YUV        0x00
 
+// COM8 values
+#define COM8_FASTAEC    0x80
+#define COM8_AECSTEP    0x40
+#define COM8_BFILT      0x20
+#define COM8_AGC        0x04
+#define COM8_AWB        0x02
+#define COM8_AEC        0x01
+
+// COM10 values
+#define COM10_VS_NEG    0x02
+
+// COM11 values
+#define COM11_HZAUTO    0x10
+#define COM11_EXP       0x02
+
+// COM13 values
+#define COM13_GAMMA     0x80
+#define COM13_UVSAT     0x40
+#define COM13_UVSWAP    0x01
+
 // COM15 values
 #define COM15_R00FF     0xC0
 #define COM15_RGB565    0x10
 
+// COM16 values
+#define COM16_AWBGAIN   0x08
+
 // TSLB values
-#define COM13_GAMMA     0x80
-#define COM13_UVSAT     0x40
 #define TSLB_YLAST      0x04
 
-// QQVGA settings (160x120) и уменьшаем до 80x60 программно
+// Полная конфигурация OV7670 для QQVGA YUV422
+// Регистры перенесены из рабочей прошивки (ov7670_due_capture)
+// Уменьшаем 160x120 → 80x60 программно при чтении (берём каждый 2-й пиксель)
 static const uint8_t ov7670_qqvga_yuv[] = {
-    REG_COM7, COM7_RESET, 0xFF, 0xFF, // Reset + delay marker
-    REG_COM7, COM7_YUV,  // YUV output
-    REG_CLKRC, 0x01,     // Clock prescaler
-    REG_COM3, 0x04,      // Enable scaling
-    REG_COM14, 0x1A,     // Manual scaling
+    // === FORMAT: YUV422 ===
+    REG_COM7, COM7_YUV,                // YUV output mode
+    REG_CLKRC, 0x01,                   // Clock prescaler /2
+    REG_RGB444, 0x00,                  // Disable RGB444
+    REG_COM15, COM15_R00FF,            // Full output range [00-FF]
+    REG_TSLB, TSLB_YLAST,             // YUYV byte order (Y first)
+    REG_COM1, 0x00,                    // No CCIR656
+    REG_COM9, 0x68,                    // AGC ceiling 128x
+    
+    // === YUV Color Matrix (from ov7670_yuv422 table) ===
+    0x4F, 0x80,                        // Matrix coefficient 1
+    0x50, 0x80,                        // Matrix coefficient 2
+    0x51, 0x00,                        // Matrix coefficient 3
+    0x52, 0x22,                        // Matrix coefficient 4
+    0x53, 0x5E,                        // Matrix coefficient 5
+    0x54, 0x80,                        // Matrix coefficient 6
+    0x58, 0x9E,                        // Matrix sign
+    REG_COM13, COM13_GAMMA | COM13_UVSAT | COM13_UVSWAP, // Gamma + UV sat + UV swap
+    
+    // === RESOLUTION: QQVGA (160x120) ===
+    REG_COM3, 0x04,                    // Enable scaling
+    REG_COM14, 0x1A,                   // Manual scaling, PCLK divider
     REG_SCALING_XSC, 0x3A,
     REG_SCALING_YSC, 0x35,
-    REG_SCALING_DCWCTR, 0x22, // Downsample by 4
+    REG_SCALING_DCWCTR, 0x22,          // Downsample by 4
     REG_SCALING_PCLK_DIV, 0xF2,
     REG_SCALING_PCLK_DELAY, 0x02,
     REG_HSTART, 0x16,
@@ -84,13 +137,108 @@ static const uint8_t ov7670_qqvga_yuv[] = {
     REG_VSTART, 0x02,
     REG_VSTOP, 0x7A,
     REG_VREF, 0x0A,
-    REG_COM10, 0x02,     // VSYNC negative
-    REG_COM8, 0x8F,      // Enable AGC, AWB, AEC
-    REG_TSLB, 0x04,      // UV swap
-    REG_COM13, 0x88,
+    
+    // === VSYNC ===
+    REG_COM10, COM10_VS_NEG,           // VSYNC negative polarity
+    
+    // === Gamma Curve ===
+    0x7A, 0x20, 0x7B, 0x10, 0x7C, 0x1E, 0x7D, 0x35,
+    0x7E, 0x5A, 0x7F, 0x69, 0x80, 0x76, 0x81, 0x80,
+    0x82, 0x88, 0x83, 0x8F, 0x84, 0x96, 0x85, 0xA3,
+    0x86, 0xAF, 0x87, 0xC4, 0x88, 0xD7, 0x89, 0xE8,
+    
+    // === AGC and AEC Parameters (progressive enable) ===
+    REG_COM8, COM8_FASTAEC | COM8_AECSTEP | COM8_BFILT, // Step 1: basic
+    REG_GAIN, 0x00,
+    0x10, 0x00,                        // AECH
+    REG_COM4, 0x40,
+    REG_BD50MAX, 0x05,
+    REG_BD60MAX, 0x07,
+    REG_AEW, 0x95,
+    REG_AEB, 0x33,
+    REG_VPT, 0xE3,
+    REG_HAECC1, 0x78,
+    REG_HAECC2, 0x68,
+    0xA1, 0x03,                        // Reserved
+    REG_HAECC3, 0xD8,
+    REG_HAECC4, 0xD8,
+    REG_HAECC5, 0xF0,
+    REG_HAECC6, 0x90,
+    REG_HAECC7, 0x94,
+    REG_COM8, COM8_FASTAEC | COM8_AECSTEP | COM8_BFILT | COM8_AGC | COM8_AEC, // Step 2: +AGC +AEC
+    
+    // === Reserved / Magic Values ===
+    REG_COM5, 0x61,
+    REG_COM6, 0x4B,
+    0x16, 0x02,
+    REG_MVFP, 0x07,                   // Mirror/VFlip
+    0x21, 0x02, 0x22, 0x91,
+    0x29, 0x07, 0x33, 0x0B,
+    0x35, 0x0B, 0x37, 0x1D,
+    0x38, 0x71, 0x39, 0x2A,
+    REG_COM12, 0x78,
+    0x4D, 0x40, 0x4E, 0x20,
+    REG_GFIX, 0x00,
+    REG_DBLV, 0x0A,                   // PLL and regulator
+    0x74, 0x10,
+    0x8D, 0x4F, 0x8E, 0x00,
+    0x8F, 0x00, 0x90, 0x00,
+    0x91, 0x00, 0x96, 0x00,
+    0x9A, 0x00, 0xB0, 0x84,
+    0xB1, 0x0C, 0xB2, 0x0E,
+    0xB3, 0x82, 0xB8, 0x0A,
+    
+    // === White Balance ===
+    0x43, 0x0A, 0x44, 0xF0,
+    0x45, 0x34, 0x46, 0x58,
+    0x47, 0x28, 0x48, 0x3A,
+    0x59, 0x88, 0x5A, 0x88,
+    0x5B, 0x44, 0x5C, 0x67,
+    0x5D, 0x49, 0x5E, 0x0E,
+    0x6C, 0x0A, 0x6D, 0x55,
+    0x6E, 0x11, 0x6F, 0x9F,
+    REG_GGAIN, 0x40,                  // G channel gain
+    REG_BLUE, 0x40,
+    REG_RED, 0x60,
+    REG_COM8, COM8_FASTAEC | COM8_AECSTEP | COM8_BFILT | COM8_AGC | COM8_AEC | COM8_AWB, // Step 3: +AWB
+    
+    // === Edge / Denoise / Contrast ===
+    REG_COM16, COM16_AWBGAIN,         // AWB gain enable
+    REG_EDGE, 0x00,
+    0x75, 0x05,
+    REG_REG76, 0xE1,
+    REG_DENOISE, 0x00,                // Denoise strength
+    0x77, 0x01,
+    0x4B, 0x09,
+    0xC9, 0x60,
     REG_BRIGHT, 0x00,
     REG_CONTRAST, 0x40,
-    0xFF, 0xFF           // End marker
+    
+    // === AEC / Exposure Timing ===
+    0x34, 0x11,
+    REG_COM11, COM11_EXP | COM11_HZAUTO, // Exposure + Hz auto detect
+    0xA4, 0x88, 0x96, 0x00,
+    0x97, 0x30, 0x98, 0x20,
+    0x99, 0x30, 0x9A, 0x84,
+    0x9B, 0x29, 0x9C, 0x03,
+    0x9D, 0x4C, 0x9E, 0x3F,
+    0x78, 0x04,
+    
+    // === Multiplexor Register Sequences ===
+    0x79, 0x01, 0xC8, 0xF0,
+    0x79, 0x0F, 0xC8, 0x00,
+    0x79, 0x10, 0xC8, 0x7E,
+    0x79, 0x0A, 0xC8, 0x80,
+    0x79, 0x0B, 0xC8, 0x01,
+    0x79, 0x0C, 0xC8, 0x0F,
+    0x79, 0x0D, 0xC8, 0x20,
+    0x79, 0x09, 0xC8, 0x80,
+    0x79, 0x02, 0xC8, 0xC0,
+    0x79, 0x03, 0xC8, 0x40,
+    0x79, 0x05, 0xC8, 0x30,
+    0x79, 0x26,
+    
+    0xFF, 0xFF                         // End marker
 };
 
 // Fast pin manipulation for Arduino Due
