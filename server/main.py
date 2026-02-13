@@ -330,7 +330,7 @@ def decode_image_for_vision(image_data: ImageData) -> Optional[str]:
 
 async def get_llm_command(data: CarDataRequest) -> CommandResponse:
     """Получение команды от LLM"""
-    global llm_log
+    global llm_log, current_system_prompt
     
     if DEMO_MODE or not openai_client:
         # Демо режим - простая логика без LLM
@@ -355,12 +355,14 @@ async def get_llm_command(data: CarDataRequest) -> CommandResponse:
         return result
     
     t_start = time.time()
+    # Получаем актуальный системный промпт (может быть изменён в рантайме)
+    system_prompt_for_log = current_system_prompt
     log_entry: Dict[str, Any] = {
         "timestamp": datetime.now().isoformat(),
         "session_id": data.session_id,
         "step": data.step,
         "mode": "LLM",
-        "system_prompt": current_system_prompt,
+        "system_prompt": system_prompt_for_log,  # Сохраняем промпт, который был использован
         "user_prompt": None,
         "raw_response": None,
         "parsed_command": None,
@@ -377,8 +379,14 @@ async def get_llm_command(data: CarDataRequest) -> CommandResponse:
         user_prompt = build_user_prompt(data)
         log_entry["user_prompt"] = user_prompt
         
+        # Используем актуальный системный промпт (может быть изменён в рантайме)
+        # Читаем значение глобальной переменной непосредственно перед использованием
+        system_prompt_to_use = current_system_prompt
+        logger.debug(f"Using system prompt (length: {len(system_prompt_to_use)} chars, "
+                    f"first 50 chars: {system_prompt_to_use[:50]}...)")
+        
         messages = [
-            {"role": "system", "content": current_system_prompt},
+            {"role": "system", "content": system_prompt_to_use},
             {"role": "user", "content": user_prompt}
         ]
         
@@ -405,7 +413,7 @@ async def get_llm_command(data: CarDataRequest) -> CommandResponse:
             # Vision запрос с изображением
             logger.info("Sending request to LLM Vision API with image")
             messages = [
-                {"role": "system", "content": current_system_prompt},
+                {"role": "system", "content": system_prompt_to_use},
                 {
                     "role": "user",
                     "content": [
@@ -881,8 +889,15 @@ async def set_system_prompt(request: Request):
     new_prompt = body.get("system_prompt", "").strip()
     if not new_prompt:
         raise HTTPException(status_code=400, detail="system_prompt cannot be empty")
+    
+    old_length = len(current_system_prompt)
     current_system_prompt = new_prompt
-    logger.info(f"System prompt updated ({len(new_prompt)} chars)")
+    new_length = len(new_prompt)
+    
+    logger.info(f"System prompt updated: {old_length} -> {new_length} chars. "
+                f"First 100 chars: {new_prompt[:100]}...")
+    logger.info("New prompt will be used in all subsequent LLM requests")
+    
     return {"status": "updated", "length": len(new_prompt)}
 
 
