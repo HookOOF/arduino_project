@@ -13,7 +13,7 @@ namespace Hardware {
     
     // Фоторезистор
     const uint8_t LIGHT_PIN = A0;
-    const int LIGHT_THRESHOLD = 200; // lightRaw < LIGHT_THRESHOLD → темно
+    const int LIGHT_THRESHOLD = 100; // lightRaw < LIGHT_THRESHOLD → темно
     
     // MPU6050 (I2C Wire1 - SDA1, SCL1)
     // Arduino DUE: SDA1 = 70, SCL1 = 71

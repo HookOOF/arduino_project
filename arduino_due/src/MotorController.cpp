@@ -25,18 +25,22 @@ void MotorController::stop() {
 void MotorController::applyCommand(const CommandConfig& cfg) {
     // Применяем направление для каждого мотора
     // leftSpeed и rightSpeed: положительное = вперед, отрицательное = назад, 0 = стоп
+    // ИСПРАВЛЕНО: моторы физически перепутаны (IN1/IN2 = правый мотор машины, IN3/IN4 = левый мотор машины)
+    // Поэтому используем rightSpeed для setLeftMotor и leftSpeed для setRightMotor
     
-    if (cfg.leftSpeed > 0) {
+    // IN1/IN2 (setLeftMotor) - это правый мотор машины, используем cfg.rightSpeed
+    if (cfg.rightSpeed > 0) {
         setLeftMotor(1);   // Вперед
-    } else if (cfg.leftSpeed < 0) {
+    } else if (cfg.rightSpeed < 0) {
         setLeftMotor(-1);  // Назад
     } else {
         setLeftMotor(0);   // Стоп
     }
     
-    if (cfg.rightSpeed > 0) {
+    // IN3/IN4 (setRightMotor) - это левый мотор машины, используем cfg.leftSpeed
+    if (cfg.leftSpeed > 0) {
         setRightMotor(1);  // Вперед
-    } else if (cfg.rightSpeed < 0) {
+    } else if (cfg.leftSpeed < 0) {
         setRightMotor(-1); // Назад
     } else {
         setRightMotor(0);  // Стоп
@@ -55,12 +59,12 @@ void MotorController::backward() {
 
 void MotorController::turnLeft() {
     setLeftMotor(0);   // Левый стоит
-    setRightMotor(1);  // Правый вперед → поворот влево
+    setRightMotor(1);  // Правый вперед → поворот ВЛЕВО (правая сторона тянет)
 }
 
 void MotorController::turnRight() {
-    setLeftMotor(1);   // Левый вперед
-    setRightMotor(0);  // Правый стоит → поворот вправо
+    setLeftMotor(1);   // Левый вперед → поворот ВПРАВО (левая сторона тянет)
+    setRightMotor(0);  // Правый стоит
 }
 
 void MotorController::setLeftMotor(int8_t direction) {
