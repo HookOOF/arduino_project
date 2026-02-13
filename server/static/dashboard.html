@@ -372,35 +372,21 @@ canvas { width: 100% !important; height: 100% !important; }
   border-radius: 3px;
 }
 
-/* Latest image — BIG + ZOOM */
+/* Latest image — FULL WIDTH */
 .latest-img {
   text-align: center;
-  position: relative;
-  overflow: hidden;
 }
 .latest-img img {
-  max-width: 100%;
-  max-height: 500px;
+  width: 100%;
   border-radius: 8px;
   border: 1px solid var(--border);
   image-rendering: pixelated;
-  cursor: zoom-in;
-  transition: transform 0.3s ease;
-  object-fit: contain;
-}
-.latest-img img.zoomed {
-  transform: scale(3);
-  cursor: zoom-out;
+  display: block;
 }
 .latest-img .no-img {
   color: var(--text2);
   font-size: 13px;
   padding: 40px;
-}
-.latest-img .zoom-hint {
-  font-size: 11px;
-  color: var(--text2);
-  margin-top: 6px;
 }
 
 /* Toggle Details */
@@ -834,19 +820,13 @@ function updateImage(d) {
     let img = container.querySelector('img');
     if (!img) {
       container.innerHTML = `
-        <img src="/images/latest?t=${Date.now()}" alt="Latest camera image" 
-             onclick="toggleZoom(this)"
-             onerror="this.parentElement.innerHTML='<div class=\\'no-img\\'>Failed to load image</div>'" />
-        <div class="zoom-hint">Click image to zoom in/out</div>`;
+        <img src="/images/latest?t=${Date.now()}" alt="Latest camera image"
+             onerror="this.parentElement.innerHTML='<div class=\\'no-img\\'>Failed to load image</div>'" />`;
     } else {
       // Update image src every poll to get the latest
       img.src = '/images/latest?t=' + Date.now();
     }
   }
-}
-
-function toggleZoom(img) {
-  img.classList.toggle('zoomed');
 }
 
 function updateAlerts(d) {
