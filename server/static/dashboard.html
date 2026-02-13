@@ -571,7 +571,7 @@ canvas { width: 100% !important; height: 100% !important; }
 let prevData = null;
 let promptLoadedFromServer = false;
 let serverPrompt = '';
-let lastLLMLogCount = -1; // Tracks when we need to re-render the log
+let lastLLMLogFingerprint = ''; // Tracks when we need to re-render the log
 let openDetailIds = new Set(); // Tracks which detail panels are open
 
 // ===== Chart Setup =====
@@ -730,18 +730,18 @@ function escapeHtml(str) {
 function updateLLMLog(d) {
   const entries = (d.recent_llm_log || []).slice().reverse();
   const container = document.getElementById('llmLog');
-  const newCount = entries.length;
   
-  if (newCount === 0) {
-    if (lastLLMLogCount !== 0) {
+  if (entries.length === 0) {
+    if (lastLLMLogFingerprint !== 'empty') {
       container.innerHTML = '<div style="color:var(--text2);text-align:center;padding:20px;">No LLM interactions yet</div>';
-      lastLLMLogCount = 0;
+      lastLLMLogFingerprint = 'empty';
     }
     return;
   }
   
-  // Only re-render DOM if the count has changed (new entries arrived or cleared)
-  if (newCount === lastLLMLogCount) return;
+  // Build fingerprint from latest entry timestamps + count to detect changes
+  const fp = entries.length + ':' + (entries[0]?.timestamp || '') + ':' + (entries[0]?.step || '');
+  if (fp === lastLLMLogFingerprint) return;
   
   // Save currently open detail IDs
   const wasOpen = new Set(openDetailIds);
@@ -776,7 +776,7 @@ function updateLLMLog(d) {
       </div>`;
   }).join('');
   
-  lastLLMLogCount = newCount;
+  lastLLMLogFingerprint = fp;
 }
 
 function toggleDetail(id) {
@@ -935,7 +935,7 @@ async function clearHistory() {
 
 async function clearLLMLog() {
   await fetch('/llm-log', { method: 'DELETE' });
-  lastLLMLogCount = -1;
+  lastLLMLogFingerprint = '';
   openDetailIds.clear();
 }
 

@@ -23,8 +23,8 @@ namespace Hardware {
     // Моторы - простой драйвер без PWM
     // Левый мотор: IN1, IN2
     // Правый мотор: IN3, IN4
-    const uint8_t MOTOR_IN1 = 6;   // Левый мотор - вперед
-    const uint8_t MOTOR_IN2 = 7;   // Левый мотор - назад
+    const uint8_t MOTOR_IN1 = 7;   // Левый мотор - вперед (was pin 6, swapped)
+    const uint8_t MOTOR_IN2 = 6;   // Левый мотор - назад  (was pin 7, swapped)
     const uint8_t MOTOR_IN3 = 4;   // Правый мотор - вперед
     const uint8_t MOTOR_IN4 = 5;   // Правый мотор - назад
     
