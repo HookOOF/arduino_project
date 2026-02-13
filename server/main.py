@@ -88,6 +88,7 @@ class ImageData(BaseModel):
     height: int = 0
     format: str = "GRAY8"
     data_base64: Optional[str] = None
+    image_id: Optional[str] = None  # ID для чанкированной загрузки
 
 class CarDataRequest(BaseModel):
     session_id: int = 1
@@ -146,6 +147,10 @@ MAX_LLM_LOG = 500
 # Алерты (падение и др.)
 alerts: List[Dict[str, Any]] = []
 MAX_ALERTS = 200
+
+# Хранилище для чанкированной загрузки изображений (image_id -> данные)
+pending_images: Dict[str, Dict[str, Any]] = {}
+PENDING_IMAGE_TIMEOUT = 60  # Секунд до удаления незавершённой загрузки
 
 # Пороги детекции падения по MPU6050
 # Нормально: az ≈ 9.8 (гравитация вниз), ax ≈ 0, ay ≈ 0
@@ -638,6 +643,18 @@ async def get_command(request: Request):
         body = await request.json()
         data = CarDataRequest(**body)
         
+        # Если есть image_id — подставляем data_base64 из pending_images
+        if (data.image is not None and data.image.image_id
+                and data.image.image_id in pending_images):
+            pi = pending_images[data.image.image_id]
+            if pi["completed"] and pi["data_base64"]:
+                data.image.data_base64 = pi["data_base64"]
+                data.image.width = pi["width"]
+                data.image.height = pi["height"]
+                logger.info(f"Attached image from chunked upload: {data.image.image_id}")
+                # Удаляем после использования
+                del pending_images[data.image.image_id]
+        
         # Проверяем наличие изображения
         has_image = (
             data.image is not None and 
@@ -791,6 +808,110 @@ async def clear_metrics():
     """Очистка истории метрик"""
     metrics_history.clear()
     return {"status": "cleared"}
+
+
+# ==================== CHUNKED IMAGE UPLOAD ====================
+
+def cleanup_pending_images():
+    """Удаление устаревших незавершённых загрузок изображений"""
+    now = time.time()
+    expired = [
+        img_id for img_id, img_data in pending_images.items()
+        if now - img_data["created_at"] > PENDING_IMAGE_TIMEOUT
+    ]
+    for img_id in expired:
+        del pending_images[img_id]
+        logger.warning(f"Expired pending image: {img_id}")
+
+
+@app.post("/image/start")
+async def image_start(request: Request):
+    """Начало чанкированной загрузки изображения от NodeMCU"""
+    cleanup_pending_images()
+    
+    body = await request.json()
+    session_id = body.get("session_id", 0)
+    step = body.get("step", 0)
+    width = body.get("width", 0)
+    height = body.get("height", 0)
+    total_chunks = body.get("total_chunks", 0)
+    crc = body.get("crc", "")
+    
+    image_id = f"s{session_id}_st{step}_{int(time.time())}"
+    
+    pending_images[image_id] = {
+        "session_id": session_id,
+        "step": step,
+        "width": width,
+        "height": height,
+        "total_chunks": total_chunks,
+        "crc": crc,
+        "chunks": {},
+        "created_at": time.time(),
+        "completed": False,
+        "data_base64": None,
+    }
+    
+    logger.info(f"Image upload started: {image_id} ({width}x{height}, {total_chunks} chunks)")
+    return {"image_id": image_id}
+
+
+@app.post("/image/chunk")
+async def image_chunk(request: Request):
+    """Приём одного чанка изображения"""
+    body = await request.json()
+    image_id = body.get("image_id", "")
+    chunk_idx = body.get("chunk_idx", -1)
+    data = body.get("data", "")
+    
+    if image_id not in pending_images:
+        raise HTTPException(status_code=404, detail="Unknown image_id")
+    
+    pending_images[image_id]["chunks"][chunk_idx] = data
+    return {"status": "ok"}
+
+
+@app.post("/image/end")
+async def image_end(request: Request):
+    """Завершение чанкированной загрузки — склейка и сохранение"""
+    body = await request.json()
+    image_id = body.get("image_id", "")
+    
+    if image_id not in pending_images:
+        raise HTTPException(status_code=404, detail="Unknown image_id")
+    
+    img = pending_images[image_id]
+    total = img["total_chunks"]
+    
+    # Проверяем что все чанки получены
+    if len(img["chunks"]) != total:
+        logger.warning(f"Image {image_id}: expected {total} chunks, got {len(img['chunks'])}")
+        raise HTTPException(status_code=400, detail="Not all chunks received")
+    
+    # Склеиваем base64 в порядке индексов
+    full_base64 = ""
+    for i in range(total):
+        if i not in img["chunks"]:
+            raise HTTPException(status_code=400, detail=f"Missing chunk {i}")
+        full_base64 += img["chunks"][i]
+    
+    img["data_base64"] = full_base64
+    img["completed"] = True
+    # Освобождаем память от отдельных чанков
+    img["chunks"] = {}
+    
+    # Сохраняем изображение на диск
+    image_data = ImageData(
+        available=True,
+        width=img["width"],
+        height=img["height"],
+        format="GRAY8",
+        data_base64=full_base64,
+    )
+    save_image(image_data, img["session_id"], img["step"])
+    
+    logger.info(f"Image upload complete: {image_id} ({len(full_base64)} bytes base64)")
+    return {"status": "ok", "image_id": image_id}
 
 
 # ==================== IMAGES ENDPOINTS ====================

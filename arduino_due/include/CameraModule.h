@@ -44,10 +44,10 @@ public:
 private:
     bool cameraInitialized;
     
-    // Буфер для изображения в grayscale (80x60 = 4800 байт)
+    // Буфер для изображения в grayscale (160x120 = 19200 байт)
     static const uint16_t IMAGE_WIDTH = Hardware::CAM_WIDTH;
     static const uint16_t IMAGE_HEIGHT = Hardware::CAM_HEIGHT;
-    // Исходное разрешение камеры QQVGA
+    // Исходное разрешение камеры QQVGA (совпадает с выходным)
     static const uint16_t CAPTURE_WIDTH = 160;
     static const uint16_t CAPTURE_HEIGHT = 120;
     static const size_t IMAGE_BUFFER_SIZE = IMAGE_WIDTH * IMAGE_HEIGHT;

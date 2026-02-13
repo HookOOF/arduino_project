@@ -51,8 +51,8 @@ namespace Hardware {
     const uint8_t CAM_D7 = 44;
     
     // Разрешение камеры
-    const uint16_t CAM_WIDTH = 80;   // QQVGA/2
-    const uint16_t CAM_HEIGHT = 60;
+    const uint16_t CAM_WIDTH = 160;   // QQVGA (full resolution)
+    const uint16_t CAM_HEIGHT = 120;
 }
 
 // Структура для хранения даты и времени

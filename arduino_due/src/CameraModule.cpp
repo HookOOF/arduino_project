@@ -336,7 +336,7 @@ bool CameraModule::begin() {
     delay(300); // Wait for settings to apply
 
     cameraInitialized = true;
-    Serial.println("CameraModule: Initialized successfully (RGB565 QQVGA 160x120 -> 80x60 grayscale)");
+    Serial.println("CameraModule: Initialized successfully (RGB565 QQVGA 160x120 -> 160x120 grayscale)");
     return true;
 }
 
@@ -391,8 +391,8 @@ ImageSnapshot CameraModule::capture() {
     fifoReadReset();
 
     // Read RGB565 image from FIFO (160x120)
-    // Downsample to 80x60 by taking every 2nd pixel in X and Y
     // Convert RGB565 -> grayscale: Y = (R*77 + G*150 + B*29) >> 8
+    // No downsampling - full resolution 160x120
 
     size_t bufIdx = 0;
     for (int y = 0; y < CAPTURE_HEIGHT; y++) {
@@ -401,22 +401,19 @@ ImageSnapshot CameraModule::capture() {
             uint8_t b1 = readByte();  // Low byte
             uint8_t b2 = readByte();  // High byte
 
-            // Downsample: take every 2nd pixel in X and Y
-            if ((x % 2 == 0) && (y % 2 == 0)) {
-                // Decode RGB565: RRRRRGGG GGGBBBBB (big-endian after combining)
-                uint16_t rgb565 = (b2 << 8) | b1;
+            // Decode RGB565: RRRRRGGG GGGBBBBB (big-endian after combining)
+            uint16_t rgb565 = (b2 << 8) | b1;
 
-                uint8_t r = ((rgb565 >> 11) & 0x1F) << 3;  // 5-bit R -> 8-bit
-                uint8_t g = ((rgb565 >> 5) & 0x3F) << 2;   // 6-bit G -> 8-bit
-                uint8_t b = (rgb565 & 0x1F) << 3;           // 5-bit B -> 8-bit
+            uint8_t r = ((rgb565 >> 11) & 0x1F) << 3;  // 5-bit R -> 8-bit
+            uint8_t g = ((rgb565 >> 5) & 0x3F) << 2;   // 6-bit G -> 8-bit
+            uint8_t b = (rgb565 & 0x1F) << 3;           // 5-bit B -> 8-bit
 
-                // Convert to grayscale using integer luminance formula
-                // Y = (R*77 + G*150 + B*29) >> 8
-                uint8_t gray = (uint8_t)(((uint16_t)r * 77 + (uint16_t)g * 150 + (uint16_t)b * 29) >> 8);
+            // Convert to grayscale using integer luminance formula
+            // Y = (R*77 + G*150 + B*29) >> 8
+            uint8_t gray = (uint8_t)(((uint16_t)r * 77 + (uint16_t)g * 150 + (uint16_t)b * 29) >> 8);
 
-                if (bufIdx < IMAGE_BUFFER_SIZE) {
-                    imageBuffer[bufIdx++] = gray;
-                }
+            if (bufIdx < IMAGE_BUFFER_SIZE) {
+                imageBuffer[bufIdx++] = gray;
             }
         }
     }

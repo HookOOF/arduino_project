@@ -29,7 +29,10 @@ const char* WIFI_PASSWORD = "54321987";
 // Сервер настройки
 const char* SERVER_HOST = "10.223.177.203";  
 const int SERVER_PORT = 8000;
-String SERVER_URL = "http://10.223.177.203:8000/command";  // Изменить на IP вашего сервера
+String SERVER_URL = "http://10.223.177.203:8000/command";
+String SERVER_IMG_START_URL = "http://10.223.177.203:8000/image/start";
+String SERVER_IMG_CHUNK_URL = "http://10.223.177.203:8000/image/chunk";
+String SERVER_IMG_END_URL   = "http://10.223.177.203:8000/image/end";
 
 // Serial настройки (для связи с Arduino Due)
 const int SERIAL_BAUD = 115200;
@@ -53,7 +56,7 @@ struct ImageTransfer {
     uint16_t totalChunks;
     uint16_t expectedCrc;
     uint16_t receivedChunks;
-    String buffer;
+    String imageId;          // image_id от сервера
     bool transferInProgress;
     
     void reset() {
@@ -62,17 +65,15 @@ struct ImageTransfer {
         totalChunks = 0;
         expectedCrc = 0;
         receivedChunks = 0;
-        buffer = "";
+        imageId = "";
         transferInProgress = false;
     }
 };
 
 ImageTransfer imageTransfer;
 
-// Буфер для изображения (для совместимости)
-String imageBuffer = "";
-int imageWidth = 0;
-int imageHeight = 0;
+// image_id последнего успешно загруженного изображения (для вставки в DATA)
+String currentImageId = "";
 
 // ==================== CRC16 ФУНКЦИЯ ====================
 
@@ -235,17 +236,7 @@ void processSerialData() {
         // Отмена передачи (без отладочного вывода)
         imageTransfer.reset();
     }
-    else if (line.startsWith("IMAGE ")) {
-        // Устаревший формат - одним пакетом (для обратной совместимости)
-        int firstSpace = line.indexOf(' ', 6);
-        int secondSpace = line.indexOf(' ', firstSpace + 1);
-        
-        if (firstSpace > 0 && secondSpace > 0) {
-            imageWidth = line.substring(6, firstSpace).toInt();
-            imageHeight = line.substring(firstSpace + 1, secondSpace).toInt();
-            imageBuffer = line.substring(secondSpace + 1);
-        }
-    }
+    // Устаревший формат IMAGE больше не поддерживается
     // Неизвестные сообщения игнорируем молча - любой вывод мешает протоколу
 }
 
@@ -256,7 +247,6 @@ void handleImageStart(String line) {
     int idx3 = line.indexOf(' ', idx2 + 1);
     
     if (idx1 < 0 || idx2 < 0 || idx3 < 0) {
-        // Не отправляем debug - мешает протоколу
         return;
     }
     
@@ -274,8 +264,49 @@ void handleImageStart(String line) {
         imageTransfer.expectedCrc = strtol(crcStr.c_str(), NULL, 16);
     }
     
+    // Отправляем POST /image/start на сервер и получаем image_id
+    if (WiFi.status() != WL_CONNECTED) {
+        return;
+    }
+    
+    HTTPClient http;
+    http.begin(wifiClient, SERVER_IMG_START_URL);
+    http.addHeader("Content-Type", "application/json");
+    http.setTimeout(5000);
+    
+    String body = "{\"session_id\":0,\"step\":0,\"width\":";
+    body += imageTransfer.width;
+    body += ",\"height\":";
+    body += imageTransfer.height;
+    body += ",\"total_chunks\":";
+    body += imageTransfer.totalChunks;
+    body += ",\"crc\":\"0x";
+    body += String(imageTransfer.expectedCrc, HEX);
+    body += "\"}";
+    
+    int httpCode = http.POST(body);
+    
+    if (httpCode == 200) {
+        String response = http.getString();
+        // Парсим image_id из {"image_id":"..."}
+        int idStart = response.indexOf("\"image_id\":\"");
+        if (idStart >= 0) {
+            idStart += 12;
+            int idEnd = response.indexOf('"', idStart);
+            if (idEnd > idStart) {
+                imageTransfer.imageId = response.substring(idStart, idEnd);
+            }
+        }
+    }
+    
+    http.end();
+    
+    if (imageTransfer.imageId.length() == 0) {
+        imageTransfer.reset();
+        return;
+    }
+    
     imageTransfer.transferInProgress = true;
-    imageTransfer.buffer.reserve(imageTransfer.totalChunks * 260);  // Резервируем память
     
     // Отправляем подтверждение готовности
     Serial.println("IMG_READY");
@@ -304,14 +335,31 @@ void handleImageChunk(String line) {
         return;
     }
     
-    // Добавляем данные в буфер
-    imageTransfer.buffer += chunkData;
     imageTransfer.receivedChunks++;
     
-    // Отправляем ACK немедленно
+    // Отправляем ACK немедленно (Arduino ждёт его)
     Serial.print("ACK ");
     Serial.println(chunkIdx);
-    Serial.flush();  // Гарантируем отправку
+    Serial.flush();
+    
+    // Отправляем чанк на сервер по HTTP (не храним в памяти)
+    if (WiFi.status() == WL_CONNECTED) {
+        HTTPClient http;
+        http.begin(wifiClient, SERVER_IMG_CHUNK_URL);
+        http.addHeader("Content-Type", "application/json");
+        http.setTimeout(5000);
+        
+        String body = "{\"image_id\":\"";
+        body += imageTransfer.imageId;
+        body += "\",\"chunk_idx\":";
+        body += chunkIdx;
+        body += ",\"data\":\"";
+        body += chunkData;
+        body += "\"}";
+        
+        http.POST(body);
+        http.end();
+    }
 }
 
 void handleImageEnd() {
@@ -321,10 +369,26 @@ void handleImageEnd() {
     
     // Проверяем что получили все чанки
     if (imageTransfer.receivedChunks == imageTransfer.totalChunks) {
-        // Копируем в основной буфер для отправки
-        imageWidth = imageTransfer.width;
-        imageHeight = imageTransfer.height;
-        imageBuffer = imageTransfer.buffer;
+        // Отправляем POST /image/end на сервер
+        if (WiFi.status() == WL_CONNECTED) {
+            HTTPClient http;
+            http.begin(wifiClient, SERVER_IMG_END_URL);
+            http.addHeader("Content-Type", "application/json");
+            http.setTimeout(10000);
+            
+            String body = "{\"image_id\":\"";
+            body += imageTransfer.imageId;
+            body += "\"}";
+            
+            int httpCode = http.POST(body);
+            
+            if (httpCode == 200) {
+                // Сохраняем image_id для вставки в следующий DATA запрос
+                currentImageId = imageTransfer.imageId;
+            }
+            
+            http.end();
+        }
     }
     
     imageTransfer.reset();
@@ -364,29 +428,24 @@ void handleSensorData(String jsonData) {
         return;
     }
     
-    // Если есть изображение, добавляем его в JSON
-    if (imageBuffer.length() > 0) {
-        // Вставляем данные изображения в JSON перед закрывающей скобкой
-        int lastBrace = jsonData.lastIndexOf('}');
-        if (lastBrace > 0) {
-            // Находим секцию image и добавляем data_base64
-            int imageSection = jsonData.indexOf("\"image\":");
-            if (imageSection > 0) {
-                int imageEnd = jsonData.indexOf('}', imageSection);
-                if (imageEnd > 0) {
-                    String beforeImage = jsonData.substring(0, imageEnd);
-                    String afterImage = jsonData.substring(imageEnd);
-                    
-                    jsonData = beforeImage + ",\"data_base64\":\"" + imageBuffer + "\"" + afterImage;
-                }
+    // Если есть загруженное изображение, вставляем image_id в секцию image
+    if (currentImageId.length() > 0) {
+        int imageSection = jsonData.indexOf("\"image\":");
+        if (imageSection > 0) {
+            int imageEnd = jsonData.indexOf('}', imageSection);
+            if (imageEnd > 0) {
+                String beforeEnd = jsonData.substring(0, imageEnd);
+                String afterEnd = jsonData.substring(imageEnd);
+                
+                jsonData = beforeEnd + ",\"image_id\":\"" + currentImageId + "\"" + afterEnd;
             }
         }
         
-        // Очищаем буфер изображения
-        imageBuffer = "";
+        // Очищаем после использования
+        currentImageId = "";
     }
     
-    // Отправляем HTTP POST запрос (без отладочных сообщений - они мешают протоколу!)
+    // Отправляем HTTP POST запрос
     HTTPClient http;
     http.begin(wifiClient, SERVER_URL);
     http.addHeader("Content-Type", "application/json");
