@@ -74,16 +74,16 @@ void CommandDictionary::initDefaultCommands() {
     storage.commands[1].rightSpeed = -1;
     storage.commands[1].baseDurationMs = 3000;
     
-    // LEFT: левый назад, правый вперед
+    // LEFT: левый стоит, правый вперед (pivot turn)
     strncpy(storage.commands[2].name, "LEFT", 15);
-    storage.commands[2].leftSpeed = -1;
+    storage.commands[2].leftSpeed = 0;
     storage.commands[2].rightSpeed = 1;
     storage.commands[2].baseDurationMs = 3000;
     
-    // RIGHT: левый вперед, правый назад
+    // RIGHT: левый вперед, правый стоит (pivot turn)
     strncpy(storage.commands[3].name, "RIGHT", 15);
     storage.commands[3].leftSpeed = 1;
-    storage.commands[3].rightSpeed = -1;
+    storage.commands[3].rightSpeed = 0;
     storage.commands[3].baseDurationMs = 3000;
     
     // STOP: оба стоят

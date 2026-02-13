@@ -54,13 +54,13 @@ void MotorController::backward() {
 }
 
 void MotorController::turnLeft() {
-    setLeftMotor(-1);  // Левый назад
-    setRightMotor(1);  // Правый вперед
+    setLeftMotor(0);   // Левый стоит
+    setRightMotor(1);  // Правый вперед → поворот влево
 }
 
 void MotorController::turnRight() {
     setLeftMotor(1);   // Левый вперед
-    setRightMotor(-1); // Правый назад
+    setRightMotor(0);  // Правый стоит → поворот вправо
 }
 
 void MotorController::setLeftMotor(int8_t direction) {
