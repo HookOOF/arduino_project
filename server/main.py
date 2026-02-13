@@ -143,6 +143,19 @@ saved_images: List[Dict[str, Any]] = []
 llm_log: List[Dict[str, Any]] = []
 MAX_LLM_LOG = 500
 
+# Алерты (падение и др.)
+alerts: List[Dict[str, Any]] = []
+MAX_ALERTS = 200
+
+# Пороги детекции падения по MPU6050
+# Нормально: az ≈ 9.8 (гравитация вниз), ax ≈ 0, ay ≈ 0
+FALL_THRESHOLDS = {
+    "az_min": 5.0,     # Если |az| < 5 — машина не вертикально
+    "ax_max": 7.0,     # Если |ax| > 7 — машина на боку
+    "ay_max": 7.0,     # Если |ay| > 7 — машина на боку
+    "gyro_max": 5.0,   # Если любая ось гироскопа > 5 рад/с — вращение
+}
+
 # ==================== ФОРМИРОВАНИЕ ПРОМПТА ====================
 
 SYSTEM_PROMPT = """You are an AI controller for a small autonomous car. 
@@ -424,8 +437,28 @@ async def get_llm_command(data: CarDataRequest) -> CommandResponse:
             log_entry["tokens_prompt"] = response.usage.prompt_tokens
             log_entry["tokens_completion"] = response.usage.completion_tokens
         
-        # Парсинг ответа
-        content = response.choices[0].message.content.strip()
+        # Парсинг ответа — безопасная обработка None
+        content = None
+        if response.choices and len(response.choices) > 0 and response.choices[0].message:
+            content = response.choices[0].message.content
+            if content:
+                content = content.strip()
+            else:
+                log_entry["error"] = "API returned content=None"
+                logger.error("LLM response content was None.")
+        else:
+            log_entry["error"] = "API returned empty choices or no message"
+            logger.error("LLM response choices were empty or message was missing.")
+        
+        if not content:
+            # content пустой — возвращаем STOP
+            log_entry["parsed_command"] = "STOP"
+            log_entry["parsed_duration_ms"] = DEFAULT_DURATION_MS
+            llm_log.append(log_entry)
+            if len(llm_log) > MAX_LLM_LOG:
+                llm_log.pop(0)
+            return CommandResponse(command="STOP", duration_ms=DEFAULT_DURATION_MS)
+        
         logger.info(f"LLM response: {content}")
         log_entry["raw_response"] = content
         
@@ -503,6 +536,51 @@ def get_demo_command(data: CarDataRequest) -> CommandResponse:
     
     # Путь свободен - едем вперед
     return CommandResponse(command="FORWARD", duration_ms=DEFAULT_DURATION_MS)
+
+
+# ==================== ДЕТЕКЦИЯ ПАДЕНИЯ ====================
+
+def check_fall_detection(data: CarDataRequest):
+    """Проверяет данные MPU6050 на предмет падения или опрокидывания."""
+    global alerts
+    if not data.sensors.mpu6050:
+        return
+
+    mpu = data.sensors.mpu6050
+    
+    is_tilted_x = abs(mpu.ax) > FALL_THRESHOLDS["ax_max"]
+    is_tilted_y = abs(mpu.ay) > FALL_THRESHOLDS["ay_max"]
+    is_not_upright = abs(mpu.az) < FALL_THRESHOLDS["az_min"]
+    is_rotating = (
+        abs(mpu.gx) > FALL_THRESHOLDS["gyro_max"]
+        or abs(mpu.gy) > FALL_THRESHOLDS["gyro_max"]
+        or abs(mpu.gz) > FALL_THRESHOLDS["gyro_max"]
+    )
+
+    # Машина считается «упавшей» если она наклонена И вращается
+    # ИЛИ если она явно не вертикальна (az далёк от 9.8)
+    if (is_tilted_x or is_tilted_y or is_not_upright) and is_rotating:
+        alert_message = "⚠ Car might have FALLEN or is unstable!"
+        alert_details = {
+            "ax": mpu.ax, "ay": mpu.ay, "az": mpu.az,
+            "gx": mpu.gx, "gy": mpu.gy, "gz": mpu.gz,
+            "is_tilted_x": is_tilted_x,
+            "is_tilted_y": is_tilted_y,
+            "is_not_upright": is_not_upright,
+            "is_rotating": is_rotating,
+        }
+        alert_entry = {
+            "timestamp": datetime.now().isoformat(),
+            "session_id": data.session_id,
+            "step": data.step,
+            "message": alert_message,
+            "details": alert_details,
+            "type": "FALL_DETECTION",
+        }
+        alerts.append(alert_entry)
+        if len(alerts) > MAX_ALERTS:
+            alerts.pop(0)
+        logger.warning(f"🚨 ALERT: {alert_message} | MPU: ax={mpu.ax} ay={mpu.ay} az={mpu.az} gx={mpu.gx} gy={mpu.gy} gz={mpu.gz}")
 
 
 # ==================== ENDPOINTS ====================
@@ -589,6 +667,9 @@ async def get_command(request: Request):
         # Ограничиваем размер истории
         if len(metrics_history) > MAX_METRICS_HISTORY:
             metrics_history.pop(0)
+        
+        # Проверка на падение по MPU6050
+        check_fall_detection(data)
         
         # Получаем команду от LLM
         response = await get_llm_command(data)
@@ -866,6 +947,23 @@ async def get_llm_log_stats():
     }
 
 
+# ==================== ALERTS ====================
+
+@app.get("/alerts")
+async def get_alerts(limit: int = 50):
+    """Получить алерты"""
+    return {"alerts": alerts[-limit:], "total": len(alerts)}
+
+
+@app.delete("/alerts")
+async def clear_alerts():
+    """Очистить алерты"""
+    global alerts
+    count = len(alerts)
+    alerts = []
+    return {"message": f"Cleared {count} alerts"}
+
+
 # ==================== DASHBOARD ====================
 
 @app.get("/dashboard", response_class=HTMLResponse)
@@ -918,6 +1016,8 @@ async def dashboard_poll():
             "avg_ms": round(sum(latencies) / len(latencies)) if latencies else 0,
         },
         "error_count": sum(1 for e in llm_log if e.get("error")),
+        "alerts": alerts[-20:],
+        "alerts_count": len(alerts),
     }
 
 

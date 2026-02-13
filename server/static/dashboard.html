@@ -77,6 +77,46 @@ header h1 .dot {
 .badge.mode-llm { border-color: var(--green); color: var(--green); }
 .badge.mode-demo { border-color: var(--orange); color: var(--orange); }
 
+/* Alert Banner */
+.alert-banner {
+  display: none;
+  background: #ff767520;
+  border: 1px solid var(--red);
+  border-radius: 8px;
+  padding: 12px 20px;
+  margin: 12px 24px 0 24px;
+  color: var(--red);
+  font-weight: 600;
+  font-size: 14px;
+  animation: alertFlash 1.5s infinite;
+}
+.alert-banner.visible { display: block; }
+@keyframes alertFlash {
+  0%, 100% { opacity: 1; }
+  50% { opacity: .7; }
+}
+.alert-banner .alert-details {
+  font-size: 12px;
+  font-weight: 400;
+  color: var(--text);
+  margin-top: 6px;
+}
+.alert-banner .alert-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+.alert-banner .alert-dismiss {
+  background: none;
+  border: 1px solid var(--red);
+  color: var(--red);
+  padding: 3px 10px;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 11px;
+}
+.alert-banner .alert-dismiss:hover { background: #ff767530; }
+
 /* Layout */
 .grid {
   display: grid;
@@ -332,21 +372,35 @@ canvas { width: 100% !important; height: 100% !important; }
   border-radius: 3px;
 }
 
-/* Latest image */
+/* Latest image — BIG + ZOOM */
 .latest-img {
   text-align: center;
+  position: relative;
+  overflow: hidden;
 }
 .latest-img img {
   max-width: 100%;
-  max-height: 200px;
+  max-height: 500px;
   border-radius: 8px;
   border: 1px solid var(--border);
   image-rendering: pixelated;
+  cursor: zoom-in;
+  transition: transform 0.3s ease;
+  object-fit: contain;
+}
+.latest-img img.zoomed {
+  transform: scale(3);
+  cursor: zoom-out;
 }
 .latest-img .no-img {
   color: var(--text2);
   font-size: 13px;
   padding: 40px;
+}
+.latest-img .zoom-hint {
+  font-size: 11px;
+  color: var(--text2);
+  margin-top: 6px;
 }
 
 /* Toggle Details */
@@ -377,18 +431,27 @@ canvas { width: 100% !important; height: 100% !important; }
   </div>
 </header>
 
+<!-- Alert Banner (fall detection) -->
+<div class="alert-banner" id="alertBanner">
+  <div class="alert-header">
+    <span id="alertText">⚠ No alerts</span>
+    <button class="alert-dismiss" onclick="dismissAlerts()">Dismiss All</button>
+  </div>
+  <div class="alert-details" id="alertDetails"></div>
+</div>
+
 <div class="grid">
-  <!-- Stats -->
+  <!-- Stats (no Metrics — already have Commands and LLM Calls) -->
   <div class="card full">
     <div class="card-header">Overview</div>
     <div class="card-body">
       <div class="stats-row">
         <div class="stat-box"><div class="label">Commands</div><div class="value green" id="statCmds">0</div></div>
-        <div class="stat-box"><div class="label">Metrics</div><div class="value blue" id="statMetrics">0</div></div>
         <div class="stat-box"><div class="label">LLM Calls</div><div class="value accent" id="statLLM">0</div></div>
         <div class="stat-box"><div class="label">Errors</div><div class="value red" id="statErrors">0</div></div>
         <div class="stat-box"><div class="label">Avg Latency</div><div class="value orange" id="statLatency">— ms</div></div>
         <div class="stat-box"><div class="label">Images</div><div class="value blue" id="statImages">0</div></div>
+        <div class="stat-box"><div class="label">Alerts</div><div class="value red" id="statAlerts">0</div></div>
       </div>
     </div>
   </div>
@@ -425,6 +488,16 @@ canvas { width: 100% !important; height: 100% !important; }
       <div class="dist-legend" id="distLegend"></div>
       <div style="margin-top: 12px;">
         <div class="chart-container"><canvas id="cmdChart"></canvas></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Latest Image — FULL WIDTH, ZOOMABLE -->
+  <div class="card full">
+    <div class="card-header">Latest Camera Image</div>
+    <div class="card-body">
+      <div class="latest-img" id="latestImg">
+        <div class="no-img">No images captured yet</div>
       </div>
     </div>
   </div>
@@ -476,12 +549,15 @@ canvas { width: 100% !important; height: 100% !important; }
     </div>
   </div>
 
-  <!-- Latest Image -->
+  <!-- Alerts History -->
   <div class="card">
-    <div class="card-header">Latest Camera Image</div>
+    <div class="card-header">
+      Alerts Log
+      <button class="btn btn-danger" style="padding:4px 10px;font-size:11px;" onclick="clearAlerts()">Clear</button>
+    </div>
     <div class="card-body">
-      <div class="latest-img" id="latestImg">
-        <div class="no-img">No images captured yet</div>
+      <div class="cmd-list" id="alertsLog" style="max-height:320px;overflow-y:auto;">
+        <div style="color:var(--text2);text-align:center;padding:20px;">No alerts</div>
       </div>
     </div>
   </div>
@@ -494,8 +570,9 @@ canvas { width: 100% !important; height: 100% !important; }
 // ===== State =====
 let prevData = null;
 let promptLoadedFromServer = false;
-let promptUserModified = false;
 let serverPrompt = '';
+let lastLLMLogCount = -1; // Tracks when we need to re-render the log
+let openDetailIds = new Set(); // Tracks which detail panels are open
 
 // ===== Chart Setup =====
 const chartDefaults = {
@@ -577,11 +654,11 @@ function updateChartData(chart, labels, data) {
 
 function updateStats(d) {
   document.getElementById('statCmds').textContent = d.status.commands_processed;
-  document.getElementById('statMetrics').textContent = d.status.metrics_stored;
   document.getElementById('statLLM').textContent = d.status.llm_log_count;
   document.getElementById('statErrors').textContent = d.error_count;
   document.getElementById('statLatency').textContent = d.latency_stats.avg_ms ? d.latency_stats.avg_ms + ' ms' : '— ms';
   document.getElementById('statImages').textContent = d.status.images_saved;
+  document.getElementById('statAlerts').textContent = d.alerts_count || 0;
   
   // Mode badge
   const mb = document.getElementById('modeBadge');
@@ -646,28 +723,43 @@ function escapeHtml(str) {
   return str.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
 }
 
+/**
+ * Updated LLM Log: Only re-renders if the number of entries changed.
+ * Preserves which detail panels are open using openDetailIds set.
+ */
 function updateLLMLog(d) {
   const entries = (d.recent_llm_log || []).slice().reverse();
   const container = document.getElementById('llmLog');
+  const newCount = entries.length;
   
-  if (entries.length === 0) {
-    container.innerHTML = '<div style="color:var(--text2);text-align:center;padding:20px;">No LLM interactions yet</div>';
+  if (newCount === 0) {
+    if (lastLLMLogCount !== 0) {
+      container.innerHTML = '<div style="color:var(--text2);text-align:center;padding:20px;">No LLM interactions yet</div>';
+      lastLLMLogCount = 0;
+    }
     return;
   }
+  
+  // Only re-render DOM if the count has changed (new entries arrived or cleared)
+  if (newCount === lastLLMLogCount) return;
+  
+  // Save currently open detail IDs
+  const wasOpen = new Set(openDetailIds);
   
   container.innerHTML = entries.map((e, idx) => {
     const cls = e.error ? 'log-entry error' : 'log-entry';
     const cmdCls = 'cmd-badge cmd-' + (e.parsed_command || 'STOP');
     const id = 'logdetail_' + idx;
+    const isOpen = wasOpen.has(id);
     return `
       <div class="${cls}">
         <div class="log-meta">
           <span>Step ${e.step}</span>
           <span>Session ${e.session_id}</span>
-          <span>${e.mode}</span>
+          <span>${e.mode || '—'}</span>
           <span>${e.latency_ms != null ? e.latency_ms + 'ms' : '—'}</span>
           ${e.tokens_prompt ? `<span>${e.tokens_prompt}+${e.tokens_completion} tok</span>` : ''}
-          ${e.image_sent ? '<span>IMG</span>' : ''}
+          ${e.image_sent ? '<span>📷 IMG</span>' : ''}
           <span>${formatTime(e.timestamp)}</span>
         </div>
         <div>
@@ -676,18 +768,27 @@ function updateLLMLog(d) {
           ${e.error ? `<span style="color:var(--red);margin-left:8px;">Error: ${escapeHtml(e.error)}</span>` : ''}
           <button class="toggle-btn" onclick="toggleDetail('${id}')">details</button>
         </div>
-        <div id="${id}" style="display:none;">
+        <div id="${id}" style="display:${isOpen ? 'block' : 'none'};">
           ${e.raw_response ? `<div class="log-section"><div class="log-section-title">LLM Raw Response</div><pre>${escapeHtml(e.raw_response)}</pre></div>` : ''}
           ${e.user_prompt ? `<div class="log-section"><div class="log-section-title">User Prompt</div><pre>${escapeHtml(e.user_prompt)}</pre></div>` : ''}
           ${e.system_prompt ? `<div class="log-section"><div class="log-section-title">System Prompt (at time of call)</div><pre>${escapeHtml(e.system_prompt)}</pre></div>` : ''}
         </div>
       </div>`;
   }).join('');
+  
+  lastLLMLogCount = newCount;
 }
 
 function toggleDetail(id) {
   const el = document.getElementById(id);
-  if (el) el.style.display = el.style.display === 'none' ? 'block' : 'none';
+  if (!el) return;
+  if (el.style.display === 'none') {
+    el.style.display = 'block';
+    openDetailIds.add(id);
+  } else {
+    el.style.display = 'none';
+    openDetailIds.delete(id);
+  }
 }
 
 function updateCommandHistory(d) {
@@ -708,7 +809,6 @@ function updatePrompt(d) {
     serverPrompt = d.system_prompt;
     promptLoadedFromServer = true;
   }
-  // Update server prompt reference for comparison
   serverPrompt = d.system_prompt;
   
   const status = document.getElementById('promptStatus');
@@ -720,10 +820,8 @@ function updatePrompt(d) {
     status.className = 'prompt-status modified';
   }
   
-  // Check if textarea differs from server
   const ta = document.getElementById('promptTextarea');
   if (ta.value !== serverPrompt && document.activeElement !== ta) {
-    // Only update if user is not editing
     ta.value = serverPrompt;
   }
 }
@@ -731,7 +829,59 @@ function updatePrompt(d) {
 function updateImage(d) {
   const container = document.getElementById('latestImg');
   if (d.status.images_saved > 0) {
-    container.innerHTML = `<img src="/images/latest?t=${Date.now()}" alt="Latest camera image" onerror="this.parentElement.innerHTML='<div class=\\'no-img\\'>Failed to load image</div>'" />`;
+    // Don't re-create the img element every poll — just update src if needed
+    let img = container.querySelector('img');
+    if (!img) {
+      container.innerHTML = `
+        <img src="/images/latest?t=${Date.now()}" alt="Latest camera image" 
+             onclick="toggleZoom(this)"
+             onerror="this.parentElement.innerHTML='<div class=\\'no-img\\'>Failed to load image</div>'" />
+        <div class="zoom-hint">Click image to zoom in/out</div>`;
+    } else {
+      // Update image src every poll to get the latest
+      img.src = '/images/latest?t=' + Date.now();
+    }
+  }
+}
+
+function toggleZoom(img) {
+  img.classList.toggle('zoomed');
+}
+
+function updateAlerts(d) {
+  const alertsList = d.alerts || [];
+  const banner = document.getElementById('alertBanner');
+  const alertText = document.getElementById('alertText');
+  const alertDetails = document.getElementById('alertDetails');
+  
+  if (alertsList.length > 0) {
+    const latest = alertsList[alertsList.length - 1];
+    banner.classList.add('visible');
+    alertText.textContent = `⚠ ${latest.message} (${alertsList.length} total alerts)`;
+    
+    const det = latest.details;
+    if (det) {
+      alertDetails.innerHTML = `
+        Session ${latest.session_id}, Step ${latest.step} — ${formatTime(latest.timestamp)}<br>
+        Accel: ax=${det.ax?.toFixed(2)} ay=${det.ay?.toFixed(2)} az=${det.az?.toFixed(2)} | 
+        Gyro: gx=${det.gx?.toFixed(2)} gy=${det.gy?.toFixed(2)} gz=${det.gz?.toFixed(2)}`;
+    }
+  } else {
+    banner.classList.remove('visible');
+  }
+  
+  // Update alerts log card
+  const logContainer = document.getElementById('alertsLog');
+  if (alertsList.length === 0) {
+    logContainer.innerHTML = '<div style="color:var(--text2);text-align:center;padding:20px;">No alerts</div>';
+  } else {
+    logContainer.innerHTML = alertsList.slice().reverse().map(a => `
+      <div style="padding:8px 10px;border-bottom:1px solid var(--border);font-size:13px;">
+        <span style="color:var(--red);font-weight:600;">${a.type}</span>
+        <span style="color:var(--text2);margin-left:8px;font-size:12px;">Step ${a.step} | ${formatTime(a.timestamp)}</span>
+        <div style="color:var(--text);font-size:12px;margin-top:4px;">${a.message}</div>
+        ${a.details ? `<div style="color:var(--text2);font-size:11px;margin-top:2px;">ax=${a.details.ax?.toFixed(2)} ay=${a.details.ay?.toFixed(2)} az=${a.details.az?.toFixed(2)} | gx=${a.details.gx?.toFixed(2)} gy=${a.details.gy?.toFixed(2)} gz=${a.details.gz?.toFixed(2)}</div>` : ''}
+      </div>`).join('');
   }
 }
 
@@ -785,6 +935,17 @@ async function clearHistory() {
 
 async function clearLLMLog() {
   await fetch('/llm-log', { method: 'DELETE' });
+  lastLLMLogCount = -1;
+  openDetailIds.clear();
+}
+
+async function clearAlerts() {
+  await fetch('/alerts', { method: 'DELETE' });
+}
+
+async function dismissAlerts() {
+  await fetch('/alerts', { method: 'DELETE' });
+  document.getElementById('alertBanner').classList.remove('visible');
 }
 
 // ===== Polling =====
@@ -801,6 +962,7 @@ async function poll() {
     updateCommandHistory(data);
     updatePrompt(data);
     updateImage(data);
+    updateAlerts(data);
     
     prevData = data;
     
@@ -818,5 +980,3 @@ setInterval(poll, 2000);
 
 </body>
 </html>
-
-
