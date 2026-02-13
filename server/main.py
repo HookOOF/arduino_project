@@ -168,8 +168,10 @@ Available commands:
 - RIGHT: Turn right (in place)
 - STOP: Stop moving
 
-You must respond with ONLY a valid JSON object in this format:
+You must respond with a valid JSON object in this format:
 {"command": "COMMAND_NAME", "duration_ms": 3000}
+
+You may include additional text before or after the JSON to provide context, observations, or answer questions (e.g., whether you can see an image, what you observe, etc.). The JSON will be extracted automatically.
 
 Rules for decision making:
 1. If distance < 20cm, consider stopping or turning
@@ -430,10 +432,11 @@ async def get_llm_command(data: CarDataRequest) -> CommandResponse:
             logger.info("Sending text-only request to LLM API")
         
         # Запрос к API (OpenAI или OpenRouter)
+        # Увеличено max_tokens, чтобы модель могла ответить и про JSON, и про описание картинки
         response = openai_client.chat.completions.create(
             model=API_MODEL,
             messages=messages,
-            max_tokens=100,
+            max_tokens=500,  # Увеличено с 100 до 500 для дополнительного текста
             temperature=0.3,
         )
         
@@ -470,7 +473,7 @@ async def get_llm_command(data: CarDataRequest) -> CommandResponse:
         logger.info(f"LLM response: {content}")
         log_entry["raw_response"] = content
         
-        # Извлекаем JSON из ответа
+        # Извлекаем JSON из ответа и дополнительный текст
         try:
             # Ищем JSON в ответе
             start = content.find('{')
@@ -478,6 +481,15 @@ async def get_llm_command(data: CarDataRequest) -> CommandResponse:
             if start >= 0 and end > start:
                 json_str = content[start:end]
                 result = json.loads(json_str)
+                
+                # Извлекаем дополнительный текст (всё, что не является JSON)
+                additional_text_before = content[:start].strip() if start > 0 else ""
+                additional_text_after = content[end:].strip() if end < len(content) else ""
+                additional_text = (additional_text_before + " " + additional_text_after).strip()
+                
+                if additional_text:
+                    log_entry["additional_text"] = additional_text
+                    logger.info(f"Additional text from LLM: {additional_text}")
                 
                 command = result.get("command", "STOP").upper()
                 duration = result.get("duration_ms", DEFAULT_DURATION_MS)

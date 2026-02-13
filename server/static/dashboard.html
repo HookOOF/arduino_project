@@ -769,6 +769,7 @@ function updateLLMLog(d) {
           <button class="toggle-btn" onclick="toggleDetail('${id}')">details</button>
         </div>
         <div id="${id}" style="display:${isOpen ? 'block' : 'none'};">
+          ${e.additional_text ? `<div class="log-section"><div class="log-section-title">💬 Model Comment / Additional Text</div><pre style="color:var(--green);">${escapeHtml(e.additional_text)}</pre></div>` : ''}
           ${e.raw_response ? `<div class="log-section"><div class="log-section-title">LLM Raw Response</div><pre>${escapeHtml(e.raw_response)}</pre></div>` : ''}
           ${e.user_prompt ? `<div class="log-section"><div class="log-section-title">User Prompt</div><pre>${escapeHtml(e.user_prompt)}</pre></div>` : ''}
           ${e.system_prompt ? `<div class="log-section"><div class="log-section-title">System Prompt (at time of call)</div><pre>${escapeHtml(e.system_prompt)}</pre></div>` : ''}
