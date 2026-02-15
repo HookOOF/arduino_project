@@ -261,7 +261,6 @@ def save_image(image_data: ImageData, session_id: int, step: int) -> Optional[Di
             
             # Создаём изображение из raw bytes (grayscale)
             img = Image.frombytes('L', (image_data.width, image_data.height), image_bytes)
-            img = img.rotate(180)
             img.save(filepath, format='PNG')
             
             logger.info(f"Image saved: {filename}")
@@ -319,7 +318,6 @@ def decode_image_for_vision(image_data: ImageData) -> Optional[str]:
             
             # Создаем изображение из raw bytes
             img = Image.frombytes('L', (image_data.width, image_data.height), image_bytes)
-            img = img.rotate(180)
             
             # Конвертируем в PNG
             buffer = io.BytesIO()

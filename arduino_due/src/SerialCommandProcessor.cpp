@@ -84,7 +84,6 @@ void SerialCommandProcessor::parseCommand(const char* line) {
         Serial.println("Serial logging disabled");
     }
     else if (strncmp(line, "time ", 5) == 0) {
-        // Формат: time dd:MM:yyyy hh:mm:ss
         rtc->setFromString(line + 5);
     }
     else if (strncmp(line, "duration ", 9) == 0) {

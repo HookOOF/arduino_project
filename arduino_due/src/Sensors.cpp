@@ -70,7 +70,6 @@ float Sensors::readHCSR04() {
     }
     return (float)distance;
 #else
-    // Fallback без библиотеки
     pinMode(Hardware::TRIG_PIN, OUTPUT);
     pinMode(Hardware::ECHO_PIN, INPUT);
     

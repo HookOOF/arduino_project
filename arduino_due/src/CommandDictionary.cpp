@@ -68,7 +68,6 @@ void CommandDictionary::initDefaultCommands() {
     storage.commands[0].rightSpeed = 1;
     storage.commands[0].baseDurationMs = 3000;
     
-    // BACKWARD: оба мотора назад
     strncpy(storage.commands[1].name, "BACKWARD", 15);
     storage.commands[1].leftSpeed = -1;
     storage.commands[1].rightSpeed = -1;

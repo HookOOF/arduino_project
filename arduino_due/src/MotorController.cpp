@@ -23,12 +23,7 @@ void MotorController::stop() {
 }
 
 void MotorController::applyCommand(const CommandConfig& cfg) {
-    // Применяем направление для каждого мотора
-    // leftSpeed и rightSpeed: положительное = вперед, отрицательное = назад, 0 = стоп
-    // ИСПРАВЛЕНО: моторы физически перепутаны (IN1/IN2 = правый мотор машины, IN3/IN4 = левый мотор машины)
-    // Поэтому используем rightSpeed для setLeftMotor и leftSpeed для setRightMotor
-    
-    // IN1/IN2 (setLeftMotor) - это правый мотор машины, используем cfg.rightSpeed
+
     if (cfg.rightSpeed > 0) {
         setLeftMotor(1);   // Вперед
     } else if (cfg.rightSpeed < 0) {
@@ -37,7 +32,6 @@ void MotorController::applyCommand(const CommandConfig& cfg) {
         setLeftMotor(0);   // Стоп
     }
     
-    // IN3/IN4 (setRightMotor) - это левый мотор машины, используем cfg.leftSpeed
     if (cfg.leftSpeed > 0) {
         setRightMotor(1);  // Вперед
     } else if (cfg.leftSpeed < 0) {

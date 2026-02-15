@@ -4,7 +4,6 @@
 #include <cstdlib>
 
 void SoftRTC::begin() {
-    // Установка времени по умолчанию
     baseTime.dd = 1;
     baseTime.MM = 1;
     baseTime.yyyy = 2026;
@@ -17,18 +16,16 @@ void SoftRTC::begin() {
 }
 
 void SoftRTC::setFromString(const char* dateTimeStr) {
-    // Формат: "dd:MM:yyyy hh:mm:ss"
+
     if (dateTimeStr == nullptr || strlen(dateTimeStr) < 19) {
         Serial.println("SoftRTC: Invalid time string");
         return;
     }
     
-    // Парсинг строки
     char buffer[20];
     strncpy(buffer, dateTimeStr, sizeof(buffer) - 1);
     buffer[sizeof(buffer) - 1] = '\0';
     
-    // dd:MM:yyyy hh:mm:ss
     baseTime.dd = atoi(buffer);
     baseTime.MM = atoi(buffer + 3);
     baseTime.yyyy = atoi(buffer + 6);
@@ -61,7 +58,6 @@ void SoftRTC::update() {
     uint32_t currentMillis = millis();
     uint32_t elapsedMs = currentMillis - baseMillis;
     
-    // Обновляем только если прошла хотя бы секунда
     if (elapsedMs >= 1000) {
         uint32_t elapsedSeconds = elapsedMs / 1000;
         baseMillis += elapsedSeconds * 1000;
@@ -87,10 +83,8 @@ void SoftRTC::addSeconds(uint32_t seconds) {
         baseTime.dd++;
     }
     
-    // Простая проверка дней в месяце
     uint8_t daysInMonth[] = {31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31};
     
-    // Високосный год
     if ((baseTime.yyyy % 4 == 0 && baseTime.yyyy % 100 != 0) || (baseTime.yyyy % 400 == 0)) {
         daysInMonth[1] = 29;
     }

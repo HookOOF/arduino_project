@@ -4,7 +4,6 @@
 #include <Arduino.h>
 #include <cstring>
 
-// Используем ArduinoJson если доступна
 #if __has_include(<ArduinoJson.h>)
 #include <ArduinoJson.h>
 #define HAS_ARDUINO_JSON 1
@@ -13,8 +12,6 @@
 #endif
 
 void WifiLink::begin() {
-    // Инициализация Serial1 для связи с NodeMCU ESP8266
-    // TX1 = pin 18, RX1 = pin 19
     Serial1.begin(Hardware::SERIAL1_BAUD);
     lineBufferPos = 0;
     
@@ -39,29 +36,21 @@ void WifiLink::sendData(uint32_t sessionId, uint32_t stepId,
                         const SensorSnapshot& sensors,
                         const ImageSnapshot& image) {
     
-    // ВАЖНО: Сначала отправляем изображение, потом DATA!
-    // Иначе NodeMCU получит DATA, сделает HTTP запрос, и только потом увидит IMG_START
-    // К тому времени Arduino Due уже получит таймаут ожидания IMG_READY
-    
     bool imageTransferSuccess = false;
     
-    // Если изображение доступно, отправляем СНАЧАЛА с чанкированием
     if (image.available && image.buffer != nullptr && image.bufferSize > 0) {
         imageTransferSuccess = sendImageChunked(image.buffer, image.bufferSize, image.width, image.height);
         if (!imageTransferSuccess) {
             Serial.println("WifiLink: Image transfer failed");
         } else {
-            // Небольшая пауза чтобы NodeMCU обработал IMG_END
             delay(50);
         }
     }
     
-    // Формирование временной метки
     char timestampStr[32];
     formatTimestamp(ts, timestampStr, sizeof(timestampStr));
     
 #if HAS_ARDUINO_JSON
-    // Используем ArduinoJson для формирования JSON
     StaticJsonDocument<1024> doc;
     
     doc["session_id"] = sessionId;
@@ -82,19 +71,16 @@ void WifiLink::sendData(uint32_t sessionId, uint32_t stepId,
     mpuObj["gz"] = sensors.gz;
     
     JsonObject imageObj = doc.createNestedObject("image");
-    // Помечаем доступным только если передача успешна
     imageObj["available"] = imageTransferSuccess;
     imageObj["width"] = imageTransferSuccess ? image.width : 0;
     imageObj["height"] = imageTransferSuccess ? image.height : 0;
     imageObj["format"] = "GRAY8";
     
-    // Отправляем JSON
     Serial1.print("DATA ");
     serializeJson(doc, Serial1);
     Serial1.println();
     
 #else
-    // Формируем JSON вручную без библиотеки
     Serial1.print("DATA {");
     Serial1.print("\"session_id\":");
     Serial1.print(sessionId);
@@ -124,7 +110,6 @@ void WifiLink::sendData(uint32_t sessionId, uint32_t stepId,
     Serial1.print(sensors.gz, 2);
     Serial1.print("}},\"image\":{");
     Serial1.print("\"available\":");
-    // Помечаем доступным только если передача успешна
     Serial1.print(imageTransferSuccess ? "true" : "false");
     Serial1.print(",\"width\":");
     Serial1.print(imageTransferSuccess ? image.width : 0);
@@ -136,26 +121,21 @@ void WifiLink::sendData(uint32_t sessionId, uint32_t stepId,
 }
 
 bool WifiLink::waitForCommand(Command& outCmd, uint32_t timeoutMs) {
-    // Инициализация структуры команды
     memset(outCmd.name, 0, sizeof(outCmd.name));
     outCmd.durationMs = 0;
-    
-    // Чтение строки из Serial1
+        
     char buffer[256];
     if (!readLine(buffer, sizeof(buffer), timeoutMs)) {
-        return false; // Таймаут или ошибка чтения
+        return false;
     }
     
-    // Проверка формата команды: должна начинаться с "CMD "
     if (strncmp(buffer, "CMD ", 4) != 0) {
-        return false; // Неверный формат
+        return false;
     }
     
-    // Извлечение JSON части (после "CMD ")
     const char* jsonStr = buffer + 4;
     
 #if HAS_ARDUINO_JSON
-    // Парсинг JSON с ArduinoJson
     StaticJsonDocument<256> doc;
     DeserializationError error = deserializeJson(doc, jsonStr);
     
@@ -181,13 +161,11 @@ bool WifiLink::waitForCommand(Command& outCmd, uint32_t timeoutMs) {
         outCmd.durationMs = doc["duration_ms"];
     }
 #else
-    // Простой парсинг без ArduinoJson
-    // Ищем "command":"VALUE"
     const char* cmdStart = strstr(jsonStr, "\"command\":\"");
     if (cmdStart == nullptr) {
         return false;
     }
-    cmdStart += 11; // Пропускаем "command":"
+    cmdStart += 11;
     
     const char* cmdEnd = strchr(cmdStart, '"');
     if (cmdEnd == nullptr) {
@@ -202,7 +180,6 @@ bool WifiLink::waitForCommand(Command& outCmd, uint32_t timeoutMs) {
     strncpy(outCmd.name, cmdStart, cmdLen);
     outCmd.name[cmdLen] = '\0';
     
-    // Ищем duration_ms
     const char* durStart = strstr(jsonStr, "\"duration_ms\":");
     if (durStart != nullptr) {
         durStart += 14;
@@ -218,7 +195,6 @@ void WifiLink::formatTimestamp(const DateTime& ts, char* buffer, size_t bufferSi
         return;
     }
     
-    // Формат: "dd:MM:yyyy hh:mm:ss"
     snprintf(buffer, bufferSize, "%02d:%02d:%04d %02d:%02d:%02d",
              ts.dd, ts.MM, ts.yyyy, ts.hh, ts.mm, ts.ss);
 }
@@ -239,28 +215,24 @@ bool WifiLink::readLine(char* buffer, size_t bufferSize, uint32_t timeoutMs) {
                 buffer[pos] = '\0';
                 return pos > 0;
             } else if (c == '\r') {
-                continue; // Игнорируем \r
+                continue;
             } else if (pos < bufferSize - 1) {
                 buffer[pos++] = c;
             }
         }
     }
     
-    // Таймаут
     buffer[pos] = '\0';
     return false;
 }
 
 bool WifiLink::sendImageChunked(const uint8_t* data, size_t size, uint16_t width, uint16_t height) {
-    // Очищаем входной буфер Serial1 перед началом
     while (Serial1.available()) {
         Serial1.read();
     }
     
-    // Вычисляем CRC16 для всего изображения
     uint16_t crc = crc16_ccitt(data, size);
     
-    // Вычисляем количество чанков
     uint16_t totalChunks = (size + CHUNK_RAW_SIZE - 1) / CHUNK_RAW_SIZE;
     
     Serial.print("WifiLink: Sending image ");
@@ -271,7 +243,6 @@ bool WifiLink::sendImageChunked(const uint8_t* data, size_t size, uint16_t width
     Serial.print(totalChunks);
     Serial.println(" chunks");
     
-    // Отправляем IMG_START
     Serial1.print("IMG_START ");
     Serial1.print(width);
     Serial1.print(" ");
@@ -280,9 +251,8 @@ bool WifiLink::sendImageChunked(const uint8_t* data, size_t size, uint16_t width
     Serial1.print(totalChunks);
     Serial1.print(" 0x");
     Serial1.println(crc, HEX);
-    Serial1.flush();  // Ждем отправки
+    Serial1.flush();
     
-    // Ждем IMG_READY от NodeMCU
     char readyBuf[32];
     if (!readLine(readyBuf, sizeof(readyBuf), ACK_TIMEOUT_MS)) {
         Serial.println("WifiLink: No IMG_READY received");
@@ -294,32 +264,26 @@ bool WifiLink::sendImageChunked(const uint8_t* data, size_t size, uint16_t width
         return false;
     }
     
-    // Буфер для base64 чанка
     char base64Chunk[CHUNK_BASE64_SIZE + 1];
     
-    // Отправляем все чанки
     for (uint16_t chunkIdx = 0; chunkIdx < totalChunks; chunkIdx++) {
         size_t offset = chunkIdx * CHUNK_RAW_SIZE;
         size_t chunkLen = (offset + CHUNK_RAW_SIZE <= size) ? CHUNK_RAW_SIZE : (size - offset);
         
-        // Кодируем чанк в base64
         size_t encoded = base64_encode(data + offset, chunkLen, base64Chunk, sizeof(base64Chunk));
         if (encoded == 0) {
             Serial.println("WifiLink: Base64 encoding failed");
             return false;
         }
         
-        // Отправляем чанк с повторами при ошибках
         if (!sendChunkWithAck(chunkIdx, base64Chunk)) {
             Serial.print("WifiLink: Failed to send chunk ");
             Serial.println(chunkIdx);
-            // Отправляем IMG_ABORT для сброса на стороне NodeMCU
             Serial1.println("IMG_ABORT");
             return false;
         }
     }
     
-    // Отправляем IMG_END
     Serial1.println("IMG_END");
     Serial1.flush();
     
@@ -329,19 +293,16 @@ bool WifiLink::sendImageChunked(const uint8_t* data, size_t size, uint16_t width
 
 bool WifiLink::sendChunkWithAck(uint16_t chunkIdx, const char* base64Data) {
     for (uint8_t retry = 0; retry < MAX_RETRIES; retry++) {
-        // Очищаем буфер перед отправкой
         while (Serial1.available()) {
             Serial1.read();
         }
         
-        // Отправляем чанк
         Serial1.print("IMG_CHUNK ");
         Serial1.print(chunkIdx);
         Serial1.print(" ");
         Serial1.println(base64Data);
-        Serial1.flush();  // Ждем завершения отправки
+        Serial1.flush();
         
-        // Ждем ACK
         if (waitForAck(chunkIdx)) {
             return true;
         }
@@ -351,7 +312,7 @@ bool WifiLink::sendChunkWithAck(uint16_t chunkIdx, const char* base64Data) {
         Serial.print(" attempt ");
         Serial.println(retry + 2);
         
-        delay(50);  // Пауза перед повтором
+        delay(50);
     }
     
     return false;
@@ -369,14 +330,12 @@ bool WifiLink::waitForAck(uint16_t expectedChunkIdx) {
             if (c == '\n') {
                 buffer[pos] = '\0';
                 
-                // Парсим ответ: ACK idx или NAK idx
                 if (strncmp(buffer, "ACK ", 4) == 0) {
                     uint16_t ackIdx = atoi(buffer + 4);
                     if (ackIdx == expectedChunkIdx) {
                         return true;
                     }
                 } else if (strncmp(buffer, "NAK ", 4) == 0) {
-                    // NAK получен - повторная передача
                     return false;
                 }
                 
@@ -387,7 +346,7 @@ bool WifiLink::waitForAck(uint16_t expectedChunkIdx) {
         }
     }
     
-    return false; // Таймаут
+    return false;
 }
 
 

@@ -278,7 +278,6 @@ bool CameraModule::begin() {
 
     Serial.println("CameraModule: Initializing OV7670 (RGB565)...");
 
-    // Setup pins
     setupPins();
     delay(100);
 
