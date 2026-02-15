@@ -54,13 +54,10 @@ void CarController::begin() {
 }
 
 void CarController::tick() {
-    // Всегда обрабатываем команды из Serial Monitor
     serialProcessor.process();
     
-    // Обновляем время
     rtc.update();
     
-    // Конечный автомат
     switch (currentState) {
         case STATE_INIT:
             handleStateInit();
